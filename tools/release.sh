@@ -40,5 +40,6 @@ tsver=$(cat torrserver/VERSION)
 src="$out/torrserver-$tsver-src.tar.gz"
 torrserver/build.sh --source "$src"
 gh release create "v$ver" "$out/kino-$ver-arm64-v8a.apk" "$out/kino-$ver-armeabi-v7a.apk" "$out/kino-update.json" "$src" \
-  -R kmuradoff/kino-player --title "Кино $ver" --notes "$notes" --latest
+  -R kmuradoff/kino-player --title "Кино $ver" --latest \
+  --notes "$notes"$'\n\n'"Исходники встроенного TorrServer $tsver (GPL-3.0): $(basename "$src"). Source of the built-in TorrServer $tsver (GPL-3.0): $(basename "$src")."
 echo "готово: v$ver"
