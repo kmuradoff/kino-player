@@ -161,11 +161,14 @@ class PlayerActivity : Activity(), Engine.Listener {
         @Suppress("DEPRECATION")
         val list = intent.getParcelableArrayExtra("video_list")?.mapNotNull { it as? Uri }.orEmpty()
         val names = intent.getStringArrayExtra("video_list.name")
+        // субтитры каждой серии (так передаёт TorrentActivity): по строке на серию, ссылки через \n
+        val listSubs = intent.getStringArrayExtra("video_list.subs")
         index = 0
         items = if (list.size > 1) {
             index = list.indexOf(uri).coerceAtLeast(0)
             list.mapIndexed { i, u ->
-                Item(u, names?.getOrNull(i) ?: Formats.titleFromPath(u.lastPathSegment), if (u == uri) subs else emptyList())
+                val itemSubs = listSubs?.getOrNull(i)?.lines()?.filter { it.isNotBlank() }?.map(Uri::parse)
+                Item(u, names?.getOrNull(i) ?: Formats.titleFromPath(u.lastPathSegment), itemSubs ?: if (u == uri) subs else emptyList())
             }
         } else listOf(Item(uri, baseTitle, subs))
         val own = items.any { TorrEngine.isOwn(it.uri) }
@@ -229,7 +232,8 @@ class PlayerActivity : Activity(), Engine.Listener {
             handler.post {
                 if (isFinishing || isDestroyed) return@post
                 r.onSuccess {
-                    items = items.map { if (TorrEngine.isOwn(it.uri)) it.copy(uri = TorrEngine.rebase(it.uri)) else it }
+                    fun fix(u: Uri) = if (TorrEngine.isOwn(u)) TorrEngine.rebase(u) else u
+                    items = items.map { it.copy(uri = fix(it.uri), subs = it.subs.map(::fix)) }
                     play(i, startMs, forceVlc)
                 }.onFailure {
                     onBuffering(false, 100)

@@ -166,13 +166,13 @@ class TorrentActivity : Activity() {
         }
         val uris = videos.map { TorrApi.streamUri(base, hash, it, builtin) }
         val names = videos.map { Formats.titleFromPath(it.name) }
-        // субтитры рядом с видео: «Фильм.ru.srt», «Subs/Фильм.srt»; если видео одно, то все
+        // субтитры рядом с видео: «Фильм.ru.srt», «Subs/Фильм.srt» (но не «Фильм1…» для «Фильм»); если видео одно, то все
         fun subsFor(i: Int): List<Uri> {
-            val stem = videos[i].name.substringBeforeLast('.').lowercase()
+            val stem = videos[i].name.substringBeforeLast('.').lowercase() + "."
             return subs.filter { videos.size == 1 || it.name.lowercase().startsWith(stem) }
                 .map { TorrApi.streamUri(base, hash, it, builtin) }
         }
-        fun play(i: Int) = play(title, uris, names, i, subsFor(i))
+        fun play(i: Int) = play(title, uris, names, i, videos.indices.map(::subsFor))
         if (videos.size == 1) {
             play(0)
             finish()
@@ -189,7 +189,7 @@ class TorrentActivity : Activity() {
             list.addView(row(names[i], f, e) { play(i) },
                 LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
         }
-        list.getChildAt(focus)?.requestFocus()
+        list.post { list.getChildAt(focus)?.requestFocus() }
     }
 
     private fun row(name: String, f: TorrApi.FileInfo, e: History.Entry?, onClick: () -> Unit): View =
@@ -220,21 +220,24 @@ class TorrentActivity : Activity() {
             })
         }
 
-    private fun play(title: String, uris: List<Uri>, names: List<String>, i: Int, subs: List<Uri>) {
+    /** subs: субтитры каждой серии, по списку на серию. */
+    private fun play(title: String, uris: List<Uri>, names: List<String>, i: Int, subs: List<List<Uri>>) {
         val intent = Intent(this, PlayerActivity::class.java)
             .setData(uris[i])
             .putExtra("title", if (uris.size == 1) names[0] else title)
-        if (subs.isNotEmpty()) intent.putExtra("subs", subs.toTypedArray<Parcelable>())
+        if (subs[i].isNotEmpty()) intent.putExtra("subs", subs[i].toTypedArray<Parcelable>())
         if (uris.size > 1) {
             intent.putExtra("video_list", uris.toTypedArray<Parcelable>())
             intent.putExtra("video_list.name", names.toTypedArray())
+            intent.putExtra("video_list.subs", subs.map { it.joinToString("\n") }.toTypedArray())
         }
         startActivity(intent)
     }
 
     private fun size(bytes: Long): String = when {
         bytes >= 1L shl 30 -> "%.1f ГБ".format(bytes / (1L shl 30).toDouble())
-        else -> "${bytes shr 20} МБ"
+        bytes >= 1L shl 20 -> "${bytes shr 20} МБ"
+        else -> "${(bytes shr 10).coerceAtLeast(1)} КБ"
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
