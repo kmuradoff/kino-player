@@ -52,7 +52,10 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
     private val main = Handler(Looper.getMainLooper())
     /** Вывод DV5: true — HDR10 (слой помечен BT.2020 PQ), false — свой тон-маппинг в SDR. */
     private lateinit var trackSelector: DefaultTrackSelector
-    private val tunneling = ctx.getSharedPreferences("player", Context.MODE_PRIVATE).getBoolean("tunneling", true)
+    // Туннель выключен по умолчанию: в туннеле звук идёт в аудиотракт MediaTek мимо микшера Android,
+    // и громкость системы к нему не применяется (кнопки громкости «не работали»). С ним же второе видео
+    // подряд падало в MediaCodecVideoRenderer.onEnabled. Включается только вручную (pref "tunneling").
+    private val tunneling = ctx.getSharedPreferences("player", Context.MODE_PRIVATE).getBoolean("tunneling", false)
 
     var doviHdr = ctx.getSharedPreferences("player", Context.MODE_PRIVATE).getBoolean("doviHdr", false)
         set(v) {
