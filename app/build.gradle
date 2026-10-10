@@ -1,0 +1,43 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.xgimiru.player'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'com.xgimiru.player'
+        minSdk 26
+        targetSdk 34
+        versionCode 8
+        versionName '0.7'
+        ndk { abiFilters 'arm64-v8a' }   // Z9X — ARMv8; под другое железо соберём отдельно
+    }
+
+    buildTypes {
+        release { minifyEnabled false }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = '17' }
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+dependencies {
+    implementation 'org.jetbrains.kotlin:kotlin-stdlib:1.9.24'
+    // Движок — libVLC: играет всё (AVI/XviD, DTS, ASS, …). Интерфейс — свой.
+    implementation 'org.videolan.android:libvlc-all:3.6.5'
+    // Второй движок — только для Dolby Vision профиля 5: у чипа есть аппаратный
+    // декодер DV, а VLC его не использует и показывает фиолетовую картинку.
+    def media3 = '1.6.1'
+    implementation "androidx.media3:media3-exoplayer:$media3"
+    implementation "androidx.media3:media3-ui:$media3"
+    implementation 'org.jellyfin.media3:media3-ffmpeg-decoder:1.6.1+2'
+}

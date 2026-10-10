@@ -1,0 +1,35 @@
+# Gradle and Android Studio
+.gradle/
+build/
+/local.properties
+.idea/
+*.iml
+.cxx/
+.externalNativeBuild/
+captures/
+.kotlin/
+
+# Build output: APKs are release assets, never git
+*.apk
+*.aab
+*.apks
+*.ap_
+*.dex
+output-metadata.json
+
+# Signing material and secrets: never commit
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pk8
+*.pem
+*.key
+keystore.properties
+signing.properties
+secrets.properties
+.env
+
+# OS junk
+.DS_Store
+Thumbs.db

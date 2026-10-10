@@ -1,0 +1,74 @@
+Kino (Кино), a video player for Android TV
+Copyright 2026 kmuradoff
+
+Kino is an independent project. It is not affiliated with, endorsed by or sponsored by XGIMI,
+Dolby Laboratories, VideoLAN, FFmpeg, Jellyfin or Google. "Dolby" and "Dolby Vision" are
+trademarks of Dolby Laboratories; "XGIMI", "Android" and "Android TV" are trademarks of their
+respective owners. The package name com.xgimiru.player is historical and does not imply any
+relation to XGIMI.
+
+Licensing of this repository
+----------------------------
+
+Everything in this repository is licensed under the Apache License, Version 2.0 (LICENSE),
+except the two files below, which are licensed under the GNU Lesser General Public License,
+version 2.1 or (at your option) any later version (LICENSES/LGPL-2.1-or-later.txt).
+Each of them says so on its first line (SPDX-License-Identifier).
+
+  app/src/main/java/com/xgimiru/player/dovi/DoviRpu.kt
+      Dolby Vision RPU parser. A Kotlin port, made in 2026 and modified (single-layer
+      profile 5 only, no NLQ, no metadata compression; output reduced to the form a shader
+      needs), of the logic of ff_dovi_rpu_parse() and of the default colour matrices
+      (ff_dovi_color_default) from FFmpeg, libavcodec/dovi_rpudec.c (formerly dovi_rpu.c):
+
+          Dolby Vision RPU decoder
+          Copyright (C) 2021 Jan Ekström
+          Copyright (C) 2021-2024 Niklas Haas
+          This file is part of FFmpeg. FFmpeg is free software; you can redistribute it
+          and/or modify it under the terms of the GNU Lesser General Public License as
+          published by the Free Software Foundation; either version 2.1 of the License,
+          or (at your option) any later version.
+
+      Source: https://git.ffmpeg.org/ffmpeg.git
+      The parsed result follows the layout of pl_dovi_metadata from libplacebo (see below).
+
+  app/src/main/java/com/xgimiru/player/dovi/DoviRenderer.kt
+      OpenGL ES renderer for Dolby Vision profile 5. Its fragment shader (reshaping with
+      polynomial and MMR pieces between pivots, the non-linear and linear colour matrices,
+      and the HPE LMS to BT.2020 RGB matrix) is ported, in 2026 and with modifications
+      (GLSL ES 3.0, external YUV texture, own output stage for HDR10 or tone-mapped SDR),
+      from pl_shader_dovi_reshape() and pl_shader_decode_color_ex() in libplacebo,
+      src/shaders/colorspace.c, by Niklas Haas and the libplacebo contributors:
+
+          This file is part of libplacebo. libplacebo is free software; you can
+          redistribute it and/or modify it under the terms of the GNU Lesser General
+          Public License as published by the Free Software Foundation; either version 2.1
+          of the License, or (at your option) any later version.
+
+      Source: https://code.videolan.org/videolan/libplacebo
+
+  The rest of the dovi package (RpuTap.kt: Media3 extractor wrapper that collects RPUs and
+  strips Dolby Vision layers) is original code under Apache-2.0.
+
+Third-party libraries used by a build
+-------------------------------------
+
+None of these are stored in this repository. Gradle downloads them, and they end up inside a
+built APK:
+
+  - AndroidX Media3 (ExoPlayer, UI) 1.6.1, Apache License 2.0.
+    https://github.com/androidx/media
+  - libVLC for Android (org.videolan.android:libvlc-all) 3.6.5, GNU LGPL 2.1 (as declared by
+    its Maven POM; bundled VLC modules and libraries carry their own licences).
+    https://code.videolan.org/videolan/vlc-android
+  - Jellyfin Media3 FFmpeg decoder (org.jellyfin.media3:media3-ffmpeg-decoder) 1.6.1+2,
+    GNU GPL 3.0 (as declared by its Maven POM). It contains a build of FFmpeg.
+    https://github.com/jellyfin/jellyfin-androidx-media
+  - Kotlin standard library 1.9.24, Apache License 2.0.
+
+Because the Jellyfin FFmpeg decoder is GPL-3.0, an APK built from this repository as it is
+must be distributed under the terms of the GNU GPL, version 3, as a whole. The source in this
+repository is compatible with that: Apache-2.0 code may be combined into a GPL-3.0 work, and
+the LGPL-2.1-or-later files may be conveyed under the GPL. Whoever distributes such an APK
+must offer its complete corresponding source (this repository at the matching commit, plus
+the exact dependency versions from app/build.gradle) and the GPL-3.0 licence text.
