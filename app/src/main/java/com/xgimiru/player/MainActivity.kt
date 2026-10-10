@@ -18,6 +18,9 @@ import android.widget.TextView
 class MainActivity : Activity() {
 
     private lateinit var list: LinearLayout
+    private lateinit var update: TextView
+    private var updateInfo: Updater.Info? = null
+    private var updating = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -47,6 +50,19 @@ class MainActivity : Activity() {
                 })
             })
         })
+        // плашка обновления: видна, только когда на GitHub есть версия новее
+        update = TextView(this).apply {
+            textSize = 18f
+            setLineSpacing(0f, 1.2f)
+            setTextColor(Color.WHITE)
+            background = getDrawable(R.drawable.history_card)
+            setPadding(dp(26), dp(16), dp(26), dp(16))
+            isFocusable = true
+            isClickable = true
+            visibility = View.GONE
+            setOnClickListener { startUpdate() }
+        }
+        root.addView(update, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(28) })
         root.addView(TextView(this).apply {
             text = "ПРОДОЛЖИТЬ ПРОСМОТР"
             textSize = 14f
@@ -67,6 +83,31 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         fill()
+        // для проверки на столе: am start ... --es update_url http://127.0.0.1:PORT/kino-update.json
+        val testUrl = intent.getStringExtra("update_url")
+        if (testUrl != null) Updater.setTestUrl(this, testUrl)
+        if (!updating) Updater.check(this, testUrl != null) { showUpdate(it) }
+    }
+
+    private fun showUpdate(info: Updater.Info?) {
+        updateInfo = info
+        if (info == null) { update.visibility = View.GONE; return }
+        update.text = "Доступна версия ${info.versionName}. Нажмите OK, чтобы обновить." +
+            (if (info.notes.isNotBlank()) "\n" + info.notes else "")
+        update.visibility = View.VISIBLE
+    }
+
+    private fun startUpdate() {
+        val info = updateInfo ?: return
+        if (updating) return
+        updating = true
+        update.text = "Скачиваю версию ${info.versionName}…"
+        Updater.install(this, info,
+            progress = { update.text = "Скачиваю версию ${info.versionName}: $it%" },
+            fail = {
+                updating = false
+                update.text = "Не получилось обновить: $it. Нажмите OK, чтобы попробовать ещё раз."
+            })
     }
 
     private fun fill() {

@@ -2,6 +2,12 @@
 
 [Русский](#русский) | [English](#english)
 
+## Обновления
+
+«Кино» само проверяет новые версии на GitHub раз в 12 часов и показывает плашку на главном экране. Обновление ставится по OK. В первый раз Android попросит разрешить «Кино» установку приложений.
+
+Version 0.8 and later update themselves from the GitHub releases. Builds before 0.8 were signed with a debug key: remove the old Kino once and install 0.8.
+
 ## Русский
 
 «Кино» это видеоплеер для Android TV, который мы используем на проекторах с
