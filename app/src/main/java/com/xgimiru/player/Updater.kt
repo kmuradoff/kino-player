@@ -21,8 +21,11 @@ import java.security.MessageDigest
  * через PackageInstaller (подтверждение показывает сам Android). Подпись APK проверяет система: поверх
  * встанет только APK с тем же ключом.
  *
- * Формат kino-update.json: {"versionCode": 9, "versionName": "0.8", "apk": "<url>", "size": N,
- * "sha256": "<hex>", "notes": "<что нового>"}.
+ * Формат kino-update.json: {"versionCode": 10, "versionName": "0.9", "apk": "<url>", "size": N,
+ * "sha256": "<hex>", "notes": "<что нового>", "apks": {"arm64-v8a": {"apk", "size", "sha256"},
+ * "armeabi-v7a": {...}}}. С 0.9 APK два, по одному на архитектуру: берём первый из
+ * Build.SUPPORTED_ABIS, который есть в "apks". Верхние apk/size/sha256 остаются сборкой arm64:
+ * только их читает 0.8, а 0.8 была только 64-битной.
  */
 object Updater {
     private const val MANIFEST_URL = "https://github.com/kmuradoff/kino-player/releases/latest/download/kino-update.json"
@@ -75,8 +78,12 @@ object Updater {
     private fun raw(i: Info) = JSONObject().put("versionCode", i.versionCode).put("versionName", i.versionName)
         .put("apk", i.apk).put("size", i.size).put("sha256", i.sha256).put("notes", i.notes).toString()
 
-    private fun parse(j: JSONObject) = Info(j.getLong("versionCode"), j.getString("versionName"), j.getString("apk"),
-        j.getLong("size"), j.getString("sha256").lowercase(), j.optString("notes"))
+    private fun parse(j: JSONObject): Info {
+        val apks = j.optJSONObject("apks")
+        val f = apks?.let { a -> Build.SUPPORTED_ABIS.firstNotNullOfOrNull { a.optJSONObject(it) } } ?: j
+        return Info(j.getLong("versionCode"), j.getString("versionName"), f.getString("apk"),
+            f.getLong("size"), f.getString("sha256").lowercase(), j.optString("notes"))
+    }
 
     private fun fetch(ctx: Context): Info? {
         val c = open(manifestUrl(ctx))

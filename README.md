@@ -6,7 +6,11 @@
 
 «Кино» само проверяет новые версии на GitHub раз в 12 часов и показывает плашку на главном экране. Обновление ставится по OK. В первый раз Android попросит разрешить «Кино» установку приложений.
 
+В каждом релизе с 0.9 два APK: `kino-<версия>-arm64-v8a.apk` для 64-битных устройств (Z9X и почти все приставки и телевизоры последних лет) и `kino-<версия>-armeabi-v7a.apk` для 32-битных. Если не знаете, какой нужен, ставьте arm64: на 32-битное устройство Android его просто не установит. Обновление само скачивает APK под ваше устройство.
+
 Version 0.8 and later update themselves from the GitHub releases. Builds before 0.8 were signed with a debug key: remove the old Kino once and install 0.8.
+
+Since 0.9 every release has two APKs: `kino-<version>-arm64-v8a.apk` for 64-bit devices (the Z9X and nearly every recent box or TV) and `kino-<version>-armeabi-v7a.apk` for 32-bit ones. If unsure, take arm64: a 32-bit device simply refuses to install it. Updates download the APK that fits the device.
 
 ## Русский
 
@@ -44,8 +48,8 @@ gradle assembleDebug
 `gradle assembleRelease` собирает неподписанный APK; подпишите его своим ключом (`apksigner`).
 Ключи, `local.properties` и результаты сборки в репозиторий не попадают (см. `.gitignore`).
 
-Сборка только под `arm64-v8a` (как у Z9X). Для другого железа поменяйте `abiFilters` в
-`app/build.gradle`. Иконку и баннер рисует `art/make_icons.py`.
+Собираются два APK, `arm64-v8a` и `armeabi-v7a` (`splits.abi` в `app/build.gradle`):
+`app/build/outputs/apk/<тип>/app-<abi>-<тип>.apk`. Иконку и баннер рисует `art/make_icons.py`.
 
 ### Лицензия
 
@@ -96,8 +100,8 @@ gradle assembleDebug
 `gradle assembleRelease` produces an unsigned APK; sign it with your own key (`apksigner`).
 Keys, `local.properties` and build output are never committed (see `.gitignore`).
 
-Only `arm64-v8a` is built (the Z9X CPU). Change `abiFilters` in `app/build.gradle` for other
-hardware. `art/make_icons.py` draws the icon and the TV banner.
+Two APKs are built, `arm64-v8a` and `armeabi-v7a` (`splits.abi` in `app/build.gradle`):
+`app/build/outputs/apk/<type>/app-<abi>-<type>.apk`. `art/make_icons.py` draws the icon and the TV banner.
 
 ### Licence
 

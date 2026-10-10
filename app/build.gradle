@@ -16,9 +16,19 @@ android {
         applicationId 'com.xgimiru.player'
         minSdk 26
         targetSdk 34
-        versionCode 9
-        versionName '0.8'
-        ndk { abiFilters 'arm64-v8a' }   // Z9X — ARMv8; под другое железо соберём отдельно
+        versionCode 10
+        versionName '0.9'
+    }
+
+    // Два APK вместо одного на 100 МБ: arm64-v8a (Z9X и всё 64-битное) и armeabi-v7a (32-битные
+    // приставки и телевизоры). Код у них один, отличаются только библиотеки VLC и FFmpeg.
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'arm64-v8a', 'armeabi-v7a'
+            universalApk false
+        }
     }
 
     signingConfigs {
