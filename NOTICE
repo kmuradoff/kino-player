@@ -89,7 +89,7 @@ over HTTP on 127.0.0.1 only. Kino's own code stays under Apache-2.0.
                         torrserver/VERSION), not modified in place
   torrserver/patches    our changes, GPL-3.0 like the code they modify: a "kino" build tag that
                         leaves out the web UI, Swagger, MCP, MSX, WebDAV, FUSE and the Telegram
-                        bot
+                        bot, and turns the LAN announcement (Bonjour) off by default
   torrserver/build.sh   applies the patches and builds the program for arm64-v8a and
                         armeabi-v7a with the Android NDK (build tags nosqlite, kino, nomsgpack)
 
