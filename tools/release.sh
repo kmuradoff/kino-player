@@ -16,8 +16,11 @@ args=()
 for abi in arm64-v8a armeabi-v7a; do
   apk="$out/kino-$ver-$abi.apk"
   cp "app/build/outputs/apk/release/app-$abi-release.apk" "$apk"
-  "$apksigner" verify --print-certs "$apk" | grep -q 'CN=Kino' || { echo "$apk подписан не ключом Кино" >&2; exit 1; }
-  unzip -l "$apk" | grep -q "lib/$abi/libvlc.so" || { echo "$apk: нет lib/$abi" >&2; exit 1; }
+  # вывод в переменную: grep -q в трубе под pipefail рвёт её раньше времени (SIGPIPE)
+  certs=$("$apksigner" verify --print-certs "$apk")
+  case $certs in *CN=Kino*) ;; *) echo "$apk подписан не ключом Кино" >&2; exit 1 ;; esac
+  libs=$(unzip -Z1 "$apk")
+  case $libs in *"lib/$abi/libvlc.so"*) ;; *) echo "$apk: нет lib/$abi" >&2; exit 1 ;; esac
   args+=("$abi" "$(shasum -a 256 "$apk" | cut -d' ' -f1)" "$(wc -c < "$apk" | tr -d ' ')")
 done
 python3 - "$out/kino-update.json" "$code" "$ver" "$notes" "${args[@]}" <<'PY'
