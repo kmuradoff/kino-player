@@ -33,3 +33,6 @@ secrets.properties
 # OS junk
 .DS_Store
 Thumbs.db
+
+# Встроенный TorrServer: сборка и готовые libtorrserver.so (torrserver/build.sh)
+torrserver/out/

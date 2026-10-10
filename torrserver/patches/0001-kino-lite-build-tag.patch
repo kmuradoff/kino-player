@@ -1,0 +1,262 @@
+Kino: lite build tag "kino"
+
+With -tags kino the server is built without the web UI, Swagger, MCP, MSX,
+WebDAV, FUSE and the Telegram bot. Kino talks to it over the JSON API
+(/echo, /settings, /torrents, /torrent/upload, /stream) only, and the binary
+shrinks from about 64 MB to about 22 MB (arm64, with gin's nomsgpack tag).
+Without the tag the build is unchanged.
+
+ server/cmd/docs_full.go   | 12 ++++++++++++
+ server/cmd/docs_kino.go   |  5 +++++
+ server/cmd/main.go        |  3 +--
+ server/server.go          |  6 +-----
+ server/tgbot_full.go      | 14 ++++++++++++++
+ server/tgbot_kino.go      |  9 +++++++++
+ server/web/extras_full.go | 34 ++++++++++++++++++++++++++++++++++
+ server/web/extras_kino.go | 11 +++++++++++
+ server/web/server.go      | 21 ++-------------------
+ server/web/swagger.go     |  2 ++
+ 10 files changed, 91 insertions(+), 26 deletions(-)
+diff --git a/server/cmd/docs_full.go b/server/cmd/docs_full.go
+new file mode 100644
+index 0000000..57b6ab7
+--- /dev/null
++++ b/server/cmd/docs_full.go
+@@ -0,0 +1,12 @@
++//go:build !kino
++
++package main
++
++import (
++	"server/docs"
++	"server/version"
++)
++
++func setDocsVersion() {
++	docs.SwaggerInfo.Version = version.Version
++}
+diff --git a/server/cmd/docs_kino.go b/server/cmd/docs_kino.go
+new file mode 100644
+index 0000000..5c694d1
+--- /dev/null
++++ b/server/cmd/docs_kino.go
+@@ -0,0 +1,5 @@
++//go:build kino
++
++package main
++
++func setDocsVersion() {}
+diff --git a/server/cmd/main.go b/server/cmd/main.go
+index ddd24c3..464e0fb 100644
+--- a/server/cmd/main.go
++++ b/server/cmd/main.go
+@@ -18,7 +18,6 @@ import (
+ 	"github.com/pkg/browser"
+ 
+ 	"server"
+-	"server/docs"
+ 	"server/log"
+ 	"server/settings"
+ 	"server/torr"
+@@ -89,7 +88,7 @@ func main() {
+ 	if params.RDB {
+ 		log.TLogln("Running in Read-only DB mode!")
+ 	}
+-	docs.SwaggerInfo.Version = version.Version
++	setDocsVersion()
+ 
+ 	// Simple Usage:
+ 	dnsResolve()
+diff --git a/server/server.go b/server/server.go
+index 1a19543..fc8cb6a 100644
+--- a/server/server.go
++++ b/server/server.go
+@@ -9,8 +9,6 @@ import (
+ 	"strings"
+ 	"sync"
+ 
+-	"server/tgbot"
+-
+ 	"server/log"
+ 	"server/netbind"
+ 	"server/settings"
+@@ -82,9 +80,7 @@ func Start() error {
+ 	settings.IPs = settings.Args.IPs
+ 
+ 	if settings.Args.TGToken != "" {
+-		if err := tgbot.Start(settings.Args.TGToken); err != nil {
+-			log.TLogln("tg bot start failed", err)
+-		}
++		startTGBot(settings.Args.TGToken)
+ 	}
+ 	return web.Start()
+ }
+diff --git a/server/tgbot_full.go b/server/tgbot_full.go
+new file mode 100644
+index 0000000..8b9d56e
+--- /dev/null
++++ b/server/tgbot_full.go
+@@ -0,0 +1,14 @@
++//go:build !kino
++
++package server
++
++import (
++	"server/log"
++	"server/tgbot"
++)
++
++func startTGBot(token string) {
++	if err := tgbot.Start(token); err != nil {
++		log.TLogln("tg bot start failed", err)
++	}
++}
+diff --git a/server/tgbot_kino.go b/server/tgbot_kino.go
+new file mode 100644
+index 0000000..fa64c7e
+--- /dev/null
++++ b/server/tgbot_kino.go
+@@ -0,0 +1,9 @@
++//go:build kino
++
++package server
++
++import "server/log"
++
++func startTGBot(string) {
++	log.TLogln("tg bot is not part of this build")
++}
+diff --git a/server/web/extras_full.go b/server/web/extras_full.go
+new file mode 100644
+index 0000000..66e9893
+--- /dev/null
++++ b/server/web/extras_full.go
+@@ -0,0 +1,34 @@
++//go:build !kino
++
++package web
++
++import (
++	"github.com/gin-gonic/gin"
++
++	"server/mcp"
++	"server/settings"
++	"server/torrfs/fuse"
++	"server/torrfs/webdav"
++	"server/web/auth"
++	"server/web/msx"
++	"server/web/pages"
++)
++
++// setupExtras mounts what the lite build (tag kino) leaves out: MCP, MSX, the web UI,
++// WebDAV, FUSE and Swagger.
++func setupExtras(route *gin.Engine) {
++	mcp.Mount(route.Group("/", auth.CheckAuth()))
++	msx.SetupRoute(route)
++	pages.SetupRoute(route)
++	if settings.Args.WebDAV {
++		webdav.MountWebDAV(route)
++	}
++	// Auto-mount FUSE filesystem if enabled
++	fuse.FuseAutoMount()
++	route.GET("/swagger/*any", swaggerHandler())
++}
++
++func stopExtras() {
++	// Unmount FUSE filesystem if mounted
++	fuse.FuseCleanup()
++}
+diff --git a/server/web/extras_kino.go b/server/web/extras_kino.go
+new file mode 100644
+index 0000000..19e57db
+--- /dev/null
++++ b/server/web/extras_kino.go
+@@ -0,0 +1,11 @@
++//go:build kino
++
++package web
++
++import "github.com/gin-gonic/gin"
++
++// Lite build for the Kino player: JSON API and streaming only. No web UI, MCP, MSX,
++// WebDAV, FUSE or Swagger.
++func setupExtras(*gin.Engine) {}
++
++func stopExtras() {}
+diff --git a/server/web/server.go b/server/web/server.go
+index 7b97a2c..2a165f0 100644
+--- a/server/web/server.go
++++ b/server/web/server.go
+@@ -11,9 +11,6 @@ import (
+ 	gstreamer "server/gstreamer/bridge"
+ 	"server/netbind"
+ 
+-	"server/torrfs/fuse"
+-	"server/torrfs/webdav"
+-
+ 	"server/rutor"
+ 
+ 	"github.com/gin-contrib/cors"
+@@ -24,15 +21,12 @@ import (
+ 	"server/bonjour"
+ 	"server/dlna"
+ 	"server/settings"
+-	"server/web/msx"
+ 
+ 	"server/log"
+-	"server/mcp"
+ 	"server/torr"
+ 	"server/version"
+ 	"server/web/api"
+ 	"server/web/auth"
+-	"server/web/pages"
+ 	"server/web/sslcerts"
+ 	"server/web/waf"
+ )
+@@ -104,13 +98,8 @@ func Start() error {
+ 
+ 	api.SetupRoute(route)
+ 	setupSSLRoutes(route)
+-	mcp.Mount(route.Group("/", auth.CheckAuth()))
+ 	gstreamer.SetupRoute(route)
+-	msx.SetupRoute(route)
+-	pages.SetupRoute(route)
+-	if settings.Args.WebDAV {
+-		webdav.MountWebDAV(route)
+-	}
++	setupExtras(route)
+ 
+ 	if settings.BTsets.EnableDLNA {
+ 		dlna.Start()
+@@ -119,11 +108,6 @@ func Start() error {
+ 		bonjour.Start()
+ 	}
+ 
+-	// Auto-mount FUSE filesystem if enabled
+-	fuse.FuseAutoMount()
+-
+-	route.GET("/swagger/*any", swaggerHandler())
+-
+ 	if err := startServers(route); err != nil {
+ 		shutdownServers()
+ 		return err
+@@ -259,8 +243,7 @@ func Stop() {
+ 	gstreamer.Stop()
+ 	dlna.Stop()
+ 	bonjour.Stop()
+-	// Unmount FUSE filesystem if mounted
+-	fuse.FuseCleanup()
++	stopExtras()
+ 	BTS.Disconnect()
+ 	waitChan <- nil
+ }
+diff --git a/server/web/swagger.go b/server/web/swagger.go
+index 38def78..b214870 100644
+--- a/server/web/swagger.go
++++ b/server/web/swagger.go
+@@ -1,3 +1,5 @@
++//go:build !kino
++
+ package web
+ 
+ import (

@@ -1,0 +1,4 @@
+[submodule "torrserver/upstream"]
+	path = torrserver/upstream
+	url = https://github.com/YouROK/TorrServer.git
+	shallow = true
