@@ -2,7 +2,7 @@ Kino (Кино), a video player for Android TV
 Copyright 2026 kmuradoff
 
 Kino is an independent project. It is not affiliated with, endorsed by or sponsored by XGIMI,
-Dolby Laboratories, VideoLAN, FFmpeg, Jellyfin or Google. "Dolby" and "Dolby Vision" are
+Dolby Laboratories, VideoLAN, FFmpeg, Jellyfin, Google or the TorrServer authors. "Dolby" and "Dolby Vision" are
 trademarks of Dolby Laboratories; "XGIMI", "Android" and "Android TV" are trademarks of their
 respective owners. The package name com.xgimiru.player is historical and does not imply any
 relation to XGIMI.
@@ -11,7 +11,7 @@ Licensing of this repository
 ----------------------------
 
 Everything in this repository is licensed under the Apache License, Version 2.0 (LICENSE),
-except the two files below, which are licensed under the GNU Lesser General Public License,
+except the torrserver/ directory (see "Built-in torrent engine" below) and the two files below, which are licensed under the GNU Lesser General Public License,
 version 2.1 or (at your option) any later version (LICENSES/LGPL-2.1-or-later.txt).
 Each of them says so on its first line (SPDX-License-Identifier).
 
@@ -72,3 +72,30 @@ repository is compatible with that: Apache-2.0 code may be combined into a GPL-3
 the LGPL-2.1-or-later files may be conveyed under the GPL. Whoever distributes such an APK
 must offer its complete corresponding source (this repository at the matching commit, plus
 the exact dependency versions from app/build.gradle) and the GPL-3.0 licence text.
+
+Built-in torrent engine (TorrServer)
+------------------------------------
+
+A built APK contains lib/<abi>/libtorrserver.so, a build of TorrServer:
+
+    TorrServer, https://github.com/YouROK/TorrServer
+    Copyright YouROK and the TorrServer contributors
+    Licensed under the GNU General Public License, version 3 (GPL-3.0).
+
+It is a separate program, not a library: Kino starts it as a child process and talks to it
+over HTTP on 127.0.0.1 only. Kino's own code stays under Apache-2.0.
+
+  torrserver/upstream   git submodule: upstream TorrServer at the pinned commit (the tag is in
+                        torrserver/VERSION), not modified in place
+  torrserver/patches    our changes, GPL-3.0 like the code they modify: a "kino" build tag that
+                        leaves out the web UI, Swagger, MCP, MSX, WebDAV, FUSE and the Telegram
+                        bot
+  torrserver/build.sh   applies the patches and builds the program for arm64-v8a and
+                        armeabi-v7a with the Android NDK (build tags nosqlite, kino, nomsgpack)
+
+TorrServer pulls in Go modules under their own licences (among them anacrolix/torrent,
+MPL-2.0; gin, MIT; bbolt, MIT). Every Kino release from the one that first ships the engine
+has torrserver-<version>-src.tar.gz attached: the complete corresponding source of the
+program inside the APK (upstream tree with the patches applied, all Go modules vendored,
+this build script). Prebuilt GStreamer libraries for desktop systems
+(server/gstreamer/gst-libs) are left out of it because this build does not use them.

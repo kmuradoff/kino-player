@@ -163,7 +163,7 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
         dovi.reset()
         trackSelector.setParameters(trackSelector.buildUponParameters().setTunnelingEnabled(tunneling))
         val subConfigs = subs.map {
-            MediaItem.SubtitleConfiguration.Builder(it).setMimeType(subtitleMime(it)).build()
+            MediaItem.SubtitleConfiguration.Builder(it).setMimeType(subtitleMime(it)).setLanguage(subtitleLanguage(it)).build()
         }
         player.setMediaItem(MediaItem.Builder().setUri(uri).setSubtitleConfigurations(subConfigs).build(), startMs)
         player.prepare()
@@ -337,6 +337,12 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
         MimeTypes.APPLICATION_PGS -> "PGS"
         MimeTypes.APPLICATION_VOBSUB -> "VobSub"
         else -> null
+    }
+
+    /** «Фильм.ru.srt» → «ru»: язык внешних субтитров из имени файла, если он там есть. */
+    private fun subtitleLanguage(u: Uri): String? {
+        val parts = u.lastPathSegment?.split('.') ?: return null
+        return parts.getOrNull(parts.size - 2)?.lowercase(Locale.ROOT)?.takeIf { parts.size >= 3 && it.length in 2..3 && it.all(Char::isLetter) }
     }
 
     private fun subtitleMime(u: Uri) = when (u.lastPathSegment?.substringAfterLast('.')?.lowercase(Locale.ROOT)) {

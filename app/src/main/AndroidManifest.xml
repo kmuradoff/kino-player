@@ -5,6 +5,10 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <!-- встроенный торрент-движок (TorrService) и его запуск при включении в режиме для Лампы -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
@@ -58,7 +62,53 @@
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
         </activity>
-            <!-- ответ системного установщика на обновление «Кино» (Updater) -->
+        <!-- magnet-ссылки и .torrent-файлы: встроенный движок или внешний TorrServe -->
+        <activity
+            android:name=".TorrentActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation|smallestScreenSize|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="magnet" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+                <data android:scheme="file" />
+                <data android:scheme="content" />
+                <data android:mimeType="application/x-bittorrent" />
+            </intent-filter>
+            <!-- файлы .torrent, у которых нет своего MIME-типа -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="file" />
+                <data android:scheme="content" />
+                <data android:host="*" />
+                <data android:pathPattern=".*\\.torrent" />
+                <data android:pathPattern=".*\\..*\\.torrent" />
+                <data android:pathPattern=".*\\..*\\..*\\.torrent" />
+            </intent-filter>
+        </activity>
+
+        <activity android:name=".SettingsActivity" android:exported="false" />
+
+        <service
+            android:name=".TorrService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+        <receiver android:name=".TorrService$Boot" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ответ системного установщика на обновление «Кино» (Updater) -->
         <receiver android:name=".Updater$Done" android:exported="false" />
-</application>
+    </application>
 </manifest>

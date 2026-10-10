@@ -1,7 +1,8 @@
 #!/bin/bash
 # Выпуск «Кино»: собрать подписанный APK, сделать kino-update.json и выложить релиз на GitHub.
 #   tools/release.sh "что нового (одна-две строки)"
-# Нужно: local.properties с kino.* (ключ подписи), gh (вход в GitHub), Gradle (GRADLE=путь, если не в PATH).
+# Нужно: local.properties с kino.* (ключ подписи), gh (вход в GitHub), Gradle (GRADLE=путь, если не в PATH),
+# Go и Android NDK для встроенного торрент-движка (torrserver/build.sh).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 notes=${1:?usage: tools/release.sh "что нового"}
@@ -21,6 +22,7 @@ for abi in arm64-v8a armeabi-v7a; do
   case $certs in *CN=Kino*) ;; *) echo "$apk подписан не ключом Кино" >&2; exit 1 ;; esac
   libs=$(unzip -Z1 "$apk")
   case $libs in *"lib/$abi/libvlc.so"*) ;; *) echo "$apk: нет lib/$abi" >&2; exit 1 ;; esac
+  case $libs in *"lib/$abi/libtorrserver.so"*) ;; *) echo "$apk: нет встроенного движка (libtorrserver.so)" >&2; exit 1 ;; esac
   args+=("$abi" "$(shasum -a 256 "$apk" | cut -d' ' -f1)" "$(wc -c < "$apk" | tr -d ' ')")
 done
 python3 - "$out/kino-update.json" "$code" "$ver" "$notes" "${args[@]}" <<'PY'
@@ -33,6 +35,10 @@ apks = {rest[i]: {"apk": url % rest[i], "size": int(rest[i + 2]), "sha256": rest
 json.dump({"versionCode": int(code), "versionName": ver, **apks["arm64-v8a"], "notes": notes,
            "apks": apks}, open(f, "w"), ensure_ascii=False, indent=1)
 PY
-gh release create "v$ver" "$out/kino-$ver-arm64-v8a.apk" "$out/kino-$ver-armeabi-v7a.apk" "$out/kino-update.json" \
+# GPL-3.0: полные исходники TorrServer той сборки, что лежит в APK, едут в тот же релиз.
+tsver=$(cat torrserver/VERSION)
+src="$out/torrserver-$tsver-src.tar.gz"
+torrserver/build.sh --source "$src"
+gh release create "v$ver" "$out/kino-$ver-arm64-v8a.apk" "$out/kino-$ver-armeabi-v7a.apk" "$out/kino-update.json" "$src" \
   -R kmuradoff/kino-player --title "Кино $ver" --notes "$notes" --latest
 echo "готово: v$ver"

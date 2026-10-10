@@ -29,10 +29,37 @@ Since 0.9 every release has two APKs: `kino-<version>-arm64-v8a.apk` for 64-bit 
 - **Внешний плеер для Лампы, TorrServe и других приложений.** Понимает параметры, которые
   передают MX Player и VLC (название, позиция, список серий, субтитры), и возвращает позицию,
   на которой вы остановились.
+- **Торренты без отдельного TorrServe.** Внутри «Кино» есть свой торрент-движок
+  ([TorrServer](https://github.com/YouROK/TorrServer)): magnet-ссылки и .torrent-файлы
+  открываются сразу, без других приложений. Можно по-прежнему пользоваться внешним TorrServe.
 - «Продолжить просмотр» на главном экране, предложение следующей серии за 30 секунд до конца,
   скорость загрузки и число пиров TorrServe.
 - Панель «звук, субтитры, скорость, экран» по кнопке вниз; перемотка ускоряется, пока кнопку
   держат (10 с, 30 с, 1 мин, 2 мин).
+
+### Встроенный торрент-движок
+
+Внутри APK лежит TorrServer, собранный отдельной программой (`lib/<abi>/libtorrserver.so`).
+Когда вы открываете magnet-ссылку или .torrent-файл, «Кино» запускает его, показывает список видео
+из торрента и играет выбранное; остальные серии идут следом. Субтитры .srt/.ass из торрента
+подключаются сами.
+
+- Движок слушает только 127.0.0.1, из сети его не видно. Порт случайный.
+- Работает, пока вы смотрите торрент, и останавливается через полторы минуты после выхода из
+  плеера. Пока работает, висит служба переднего плана, чтобы прошивка его не убила.
+- Кэш в памяти подбирается по объёму памяти устройства: 48 МБ до 1,2 ГБ, 64 МБ до 1,8 ГБ, 96 МБ до
+  2,5 ГБ, дальше 128 МБ. В настройках можно задать свой.
+- **Настройки** (кнопка на главном экране): встроенный движок или внешний TorrServe по адресу.
+  По умолчанию встроенный, если адрес внешнего не задан. Видео из Лампы всегда играет через
+  тот TorrServe, что указан в самой Лампе.
+- **Для Лампы и других приложений** (по умолчанию выключено): движок работает постоянно на
+  127.0.0.1:8090 и запускается при включении устройства. Тогда в Лампе можно указать
+  TorrServe `127.0.0.1:8090` и не ставить отдельный TorrServe. Отдельный TorrServe на том же порту
+  при этом должен быть выключен.
+- Журнал движка: `Android/data/com.xgimiru.player/files/torrserver.log`.
+
+Движок добавляет к каждому APK примерно 8 МБ (около 22 МБ после установки). Зато все библиотеки в APK
+теперь сжаты, поэтому сами APK стали меньше: 35 МБ вместо 58 (arm64) и 33 МБ вместо 45 (32 бита).
 
 ### Сборка
 
@@ -48,6 +75,11 @@ gradle assembleDebug
 `gradle assembleRelease` собирает неподписанный APK; подпишите его своим ключом (`apksigner`).
 Ключи, `local.properties` и результаты сборки в репозиторий не попадают (см. `.gitignore`).
 
+Для встроенного торрент-движка ещё нужны Go (1.25 или новее) и Android NDK. Gradle сам вызывает
+`torrserver/build.sh`: он достаёт подмодуль `torrserver/upstream` (TorrServer, закреплённый
+коммит), накладывает патчи из `torrserver/patches` и собирает программу под оба ABI. Без Go:
+`gradle -Pkino.noTorrServer assembleDebug`, тогда APK будет без встроенного движка.
+
 Собираются два APK, `arm64-v8a` и `armeabi-v7a` (`splits.abi` в `app/build.gradle`):
 `app/build/outputs/apk/<тип>/app-<abi>-<тип>.apk`. Иконку и баннер рисует `art/make_icons.py`.
 
@@ -59,9 +91,13 @@ gradle assembleDebug
   libplacebo.
 - Собранный APK содержит FFmpeg-декодер Jellyfin под GPL-3.0, поэтому APK целиком
   распространяется на условиях GPL-3.0.
+- Встроенный торрент-движок это TorrServer (GPL-3.0), отдельная программа: «Кино» запускает её и
+  говорит с ней по HTTP. Её исходники: подмодуль `torrserver/upstream`, наши изменения в
+  `torrserver/patches`, сборка в `torrserver/build.sh`. К каждому релизу приложен архив
+  `torrserver-<версия>-src.tar.gz` с полными исходниками той сборки, что лежит в APK.
 
-Подробности и авторы исходного кода в `NOTICE`. Проект не связан с XGIMI, Dolby, VideoLAN
-или Google. Dolby Vision является товарным знаком Dolby Laboratories.
+Подробности и авторы исходного кода в `NOTICE`. Проект не связан с XGIMI, Dolby, VideoLAN,
+Google или авторами TorrServer. Dolby Vision является товарным знаком Dolby Laboratories.
 
 ## English
 
@@ -81,10 +117,37 @@ Features:
 - **External player for Lampa, TorrServe and other apps.** It understands the intent extras
   used with MX Player and VLC (title, position, playlist, subtitles) and returns the position
   where you stopped.
+- **Torrents without a separate TorrServe.** Kino carries its own torrent engine
+  ([TorrServer](https://github.com/YouROK/TorrServer)): magnet links and .torrent files open
+  directly, no other app needed. An external TorrServe still works too.
 - "Continue watching" on the home screen, a next-episode prompt 30 seconds before the end,
   TorrServe download speed and peer count.
 - An audio, subtitles, speed and zoom panel on the Down key; seeking speeds up while the key is
   held (10 s, 30 s, 1 min, 2 min).
+
+### Built-in torrent engine
+
+The APK carries TorrServer, built as a separate program (`lib/<abi>/libtorrserver.so`). When you
+open a magnet link or a .torrent file, Kino starts it, lists the videos in the torrent and plays
+the one you pick, with the rest queued as next episodes. .srt/.ass subtitles from the torrent are
+added automatically.
+
+- The engine listens on 127.0.0.1 only, so the network cannot reach it. The port is random.
+- It runs while you watch a torrent and stops 90 seconds after you leave the player. While it
+  runs, a foreground service keeps the firmware from killing it.
+- Its RAM cache follows the device memory: 48 MB under 1.2 GB, 64 MB under 1.8 GB, 96 MB under
+  2.5 GB, 128 MB above. Settings can override it.
+- **Settings** (button on the home screen): built-in engine or an external TorrServe address.
+  The built-in engine is the default unless an external address is set. Videos from Lampa always
+  play through the TorrServe configured in Lampa.
+- **For Lampa and other apps** (off by default): the engine runs all the time on 127.0.0.1:8090
+  and starts at boot, so Lampa can use TorrServe `127.0.0.1:8090` without a separate TorrServe app.
+  A separate TorrServe on the same port must be off then.
+- Engine log: `Android/data/com.xgimiru.player/files/torrserver.log`.
+
+The engine adds about 8 MB to each APK (21 to 22 MB once installed). All native libraries are now
+compressed in the APK, so the APKs got smaller anyway: 35 MB instead of 58 (arm64) and 33 MB
+instead of 45 (32-bit).
 
 ### Building
 
@@ -100,6 +163,11 @@ gradle assembleDebug
 `gradle assembleRelease` produces an unsigned APK; sign it with your own key (`apksigner`).
 Keys, `local.properties` and build output are never committed (see `.gitignore`).
 
+The built-in torrent engine also needs Go (1.25 or later) and the Android NDK. Gradle runs
+`torrserver/build.sh`, which fetches the `torrserver/upstream` submodule (TorrServer at a pinned
+commit), applies `torrserver/patches` and builds the program for both ABIs. Without Go, use
+`gradle -Pkino.noTorrServer assembleDebug` for an APK without the built-in engine.
+
 Two APKs are built, `arm64-v8a` and `armeabi-v7a` (`splits.abi` in `app/build.gradle`):
 `app/build/outputs/apk/<type>/app-<abi>-<type>.apk`. `art/make_icons.py` draws the icon and the TV banner.
 
@@ -111,6 +179,10 @@ Two APKs are built, `arm64-v8a` and `armeabi-v7a` (`splits.abi` in `app/build.gr
   FFmpeg and the Dolby Vision shader from libplacebo.
 - A built APK includes the Jellyfin FFmpeg decoder, which is GPL-3.0, so the APK as a whole is
   distributed under GPL-3.0.
+- The built-in torrent engine is TorrServer (GPL-3.0), a separate program that Kino starts and
+  talks to over HTTP. Its source: the `torrserver/upstream` submodule, our changes in
+  `torrserver/patches`, the build in `torrserver/build.sh`. Every release has a
+  `torrserver-<version>-src.tar.gz` with the complete source of the build inside the APK.
 
 See `NOTICE` for details and the authors of the original code. This project is not affiliated
-with XGIMI, Dolby, VideoLAN or Google. Dolby Vision is a trademark of Dolby Laboratories.
+with XGIMI, Dolby, VideoLAN, Google or the TorrServer authors. Dolby Vision is a trademark of Dolby Laboratories.

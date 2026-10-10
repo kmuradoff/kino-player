@@ -77,6 +77,9 @@ class PlayerActivity : Activity(), Engine.Listener {
     private var loading = false
     private var loadingPct = -1
     private var fellBack = false        // уже переключались на запасной движок для этого файла
+    private var ownTorrents = false     // в списке есть видео со встроенного торрент-движка
+    private var engineRestarted = false // перезапускали встроенный движок после сбоя этого файла
+    private var startFrom = 0L          // с какой позиции открывали текущий файл (для «попробовать ещё раз»)
 
     // ── Жизненный цикл ───────────────────────────────────────────────────────
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -95,13 +98,21 @@ class PlayerActivity : Activity(), Engine.Listener {
         open(intent)
     }
 
+    override fun onStart() {
+        super.onStart()
+        if (ownTorrents) TorrService.hold(this, HOLD)
+    }
+
     override fun onStop() {
         super.onStop()
         save()
         engine?.let { if (it.isPlaying) { it.pause(); paused = true } }
+        // встроенный торрент-движок остановится, если не вернуться к фильму за полторы минуты
+        if (ownTorrents) TorrService.release(this, HOLD)
     }
 
     override fun onDestroy() {
+        if (ownTorrents) TorrService.release(this, HOLD)
         handler.removeCallbacksAndMessages(null)
         io.shutdownNow()
         engine?.release()
@@ -157,6 +168,9 @@ class PlayerActivity : Activity(), Engine.Listener {
                 Item(u, names?.getOrNull(i) ?: Formats.titleFromPath(u.lastPathSegment), if (u == uri) subs else emptyList())
             }
         } else listOf(Item(uri, baseTitle, subs))
+        val own = items.any { TorrEngine.isOwn(it.uri) }
+        if (own) TorrService.hold(this, HOLD) else if (ownTorrents) TorrService.release(this, HOLD)
+        ownTorrents = own
 
         @Suppress("DEPRECATION")
         val explicit = (intent.extras?.get("position") as? Number)?.toLong()
@@ -174,6 +188,11 @@ class PlayerActivity : Activity(), Engine.Listener {
     /** Запуск серии [i]. [forceVlc] — запасной движок после сбоя Media3. */
     private fun play(i: Int, startMs: Long, forceVlc: Boolean = false) {
         index = i
+        startFrom = startMs
+        if (TorrEngine.isOwn(items[i].uri) && !(TorrEngine.isRunning && items[i].uri.port == TorrEngine.port)) {
+            startTorrEngine(i, startMs, forceVlc)
+            return
+        }
         val item = items[i]
         completed = false
         nextDismissed = false
@@ -197,6 +216,30 @@ class PlayerActivity : Activity(), Engine.Listener {
         onBuffering(true, -1)
     }
 
+    /**
+     * Встроенный движок не запущен (остановился, пока фильм стоял в фоне) или порт в ссылке от
+     * прошлого запуска: запустить движок, подставить порт во все его ссылки и играть.
+     */
+    private fun startTorrEngine(i: Int, startMs: Long, forceVlc: Boolean) {
+        error.visibility = View.GONE
+        showTitles()
+        onBuffering(true, -1)
+        io.execute {
+            val r = runCatching { TorrEngine.start(this) }
+            handler.post {
+                if (isFinishing || isDestroyed) return@post
+                r.onSuccess {
+                    items = items.map { if (TorrEngine.isOwn(it.uri)) it.copy(uri = TorrEngine.rebase(it.uri)) else it }
+                    play(i, startMs, forceVlc)
+                }.onFailure {
+                    onBuffering(false, 100)
+                    errorText.text = "Торрент-движок не запустился: ${it.message}"
+                    error.visibility = View.VISIBLE
+                }
+            }
+        }
+    }
+
     private fun current(): Item? = items.getOrNull(index)
 
     private fun savedPosition(item: Item): Long? {
@@ -207,7 +250,7 @@ class PlayerActivity : Activity(), Engine.Listener {
     // ── События движка ───────────────────────────────────────────────────────
     override fun onStateChanged() {
         val playing = engine?.isPlaying == true
-        if (playing) paused = false
+        if (playing) { paused = false; engineRestarted = false }
         dim.animate().alpha(if (playing || loading) 0f else if (paused) 1f else 0f).setDuration(250).start()
         if (playing) scheduleHide() else if (paused) showControls(0)
     }
@@ -246,6 +289,13 @@ class PlayerActivity : Activity(), Engine.Listener {
 
     override fun onError(message: String, fallback: Boolean) {
         onBuffering(false, 100)
+        val item = current()
+        if (item != null && TorrEngine.isOwn(item.uri) && !TorrEngine.isRunning && !engineRestarted) {
+            // встроенный движок остановился (простой в фоне, сбой): поднять и продолжить с того же места
+            engineRestarted = true
+            play(index, engine?.position ?: 0L, forceVlc = engineIsVlc)
+            return
+        }
         if (fallback && !engineIsVlc && !fellBack) {
             // Media3 не справился с форматом — пробуем тот же файл на VLC с того же места.
             fellBack = true
@@ -254,7 +304,8 @@ class PlayerActivity : Activity(), Engine.Listener {
             showToast("Включил запасной движок", "этот файл лучше играет через VLC", 3500)
             return
         }
-        errorText.text = message
+        errorText.text = if (item != null && TorrEngine.isOwn(item.uri) && !TorrEngine.isRunning)
+            "Торрент-движок остановился" else message
         error.visibility = View.VISIBLE
     }
 
@@ -419,15 +470,17 @@ class PlayerActivity : Activity(), Engine.Listener {
             return true
         }
         if (e.action != KeyEvent.ACTION_DOWN) return true
-        val eng = engine ?: return true
 
         if (error.visibility == View.VISIBLE) {
             when (e.keyCode) {
                 KeyEvent.KEYCODE_BACK -> finishWithResult()
-                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> play(index, eng.position, forceVlc = engineIsVlc)
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER ->
+                    play(index, engine?.position?.takeIf { it > 0 } ?: startFrom, forceVlc = engineIsVlc)
             }
             return true
         }
+        // движка ещё нет (запускается торрент-движок): выйти можно всегда
+        val eng = engine ?: run { if (e.keyCode == KeyEvent.KEYCODE_BACK) finishWithResult(); return true }
 
         when (e.keyCode) {
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER,
@@ -652,6 +705,7 @@ class PlayerActivity : Activity(), Engine.Listener {
     }
 
     companion object {
+        private const val HOLD = "player"
         private val SCRUB_KEYS = setOf(
             KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT,
             KeyEvent.KEYCODE_MEDIA_REWIND, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD,

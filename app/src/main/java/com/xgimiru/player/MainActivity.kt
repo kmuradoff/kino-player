@@ -48,6 +48,16 @@ class MainActivity : Activity() {
                     textSize = 16f
                     setTextColor(getColor(R.color.text_dim))
                 })
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(TextView(this@MainActivity).apply {
+                text = "Настройки"
+                textSize = 18f
+                setTextColor(Color.WHITE)
+                background = getDrawable(R.drawable.item_bg)
+                setPadding(dp(20), dp(10), dp(20), dp(10))
+                isFocusable = true
+                isClickable = true
+                setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
             })
         })
         // плашка обновления: видна, только когда на GitHub есть версия новее
@@ -87,6 +97,8 @@ class MainActivity : Activity() {
         val testUrl = intent.getStringExtra("update_url")
         if (testUrl != null) Updater.setTestUrl(this, testUrl)
         if (!updating) Updater.check(this, testUrl != null) { showUpdate(it) }
+        // встроенный движок для Лампы: поднять, если ещё не работает (после обновления «Кино» и т. п.)
+        if (TorrSettings.shared(this)) TorrService.hold(this, TorrService.SHARED)
     }
 
     private fun showUpdate(info: Updater.Info?) {
@@ -116,7 +128,8 @@ class MainActivity : Activity() {
         if (items.isEmpty()) {
             list.addView(TextView(this).apply {
                 text = "Здесь появятся фильмы и серии, которые вы начали смотреть.\n\n" +
-                    "Запускайте видео из Лампы — «Кино» откроется само, если выбрать его плеером."
+                    "Запускайте видео из Лампы — «Кино» откроется само, если выбрать его плеером. " +
+                    "Magnet-ссылки и .torrent-файлы «Кино» открывает и без TorrServe."
                 textSize = 18f
                 setLineSpacing(0f, 1.25f)
                 setTextColor(getColor(R.color.text_dim))
@@ -125,7 +138,8 @@ class MainActivity : Activity() {
             return
         }
         for (e in items) list.addView(card(e), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
-        list.getChildAt(0)?.requestFocus()
+        // после разметки: иначе фокус достаётся первой кнопке сверху («Настройки»)
+        list.post { list.getChildAt(0)?.requestFocus() }
     }
 
     private fun card(e: History.Entry): View {
