@@ -80,6 +80,9 @@ class PlayerActivity : Activity(), Engine.Listener {
     private var ownTorrents = false     // в списке есть видео со встроенного торрент-движка
     private var engineRestarted = false // перезапускали встроенный движок после сбоя этого файла
     private var startFrom = 0L          // с какой позиции открывали текущий файл (для «попробовать ещё раз»)
+    private var chapters: List<Chapters.Chapter> = emptyList()  // главы текущего файла: где титры
+    private var chaptersOf: Uri? = null // чьи главы прочитаны или читаются
+    private var nextFrom = 0L           // позиция, на которой появилась карточка следующей серии
 
     // ── Жизненный цикл ───────────────────────────────────────────────────────
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -199,6 +202,9 @@ class PlayerActivity : Activity(), Engine.Listener {
         val item = items[i]
         completed = false
         nextDismissed = false
+        if (item.uri != chaptersOf) { chapters = emptyList(); chaptersOf = null }
+        handler.removeCallbacks(loadChapters)
+        if (i + 1 < items.size) handler.postDelayed(loadChapters, 5000)   // когда фильм уже пошёл
         paused = false
         if (!forceVlc) fellBack = false
         error.visibility = View.GONE
@@ -245,6 +251,17 @@ class PlayerActivity : Activity(), Engine.Listener {
     }
 
     private fun current(): Item? = items.getOrNull(index)
+
+    /** Главы MKV текущей серии, чтобы показать следующую с начала титров. В фоне: это сеть. */
+    private val loadChapters = Runnable {
+        val uri = current()?.uri ?: return@Runnable
+        if (chaptersOf == uri) return@Runnable
+        chaptersOf = uri
+        Thread {
+            val list = Chapters.read(applicationContext, uri)
+            handler.post { if (current()?.uri == uri) chapters = list }
+        }.start()
+    }
 
     private fun savedPosition(item: Item): Long? {
         val e = History.get(this, History.key(item.uri)) ?: return null
@@ -336,17 +353,30 @@ class PlayerActivity : Activity(), Engine.Listener {
         } else ""
         if (buffering.visibility == View.VISIBLE) updateBufferText()
 
-        // Следующая серия — за 30 секунд до конца
+        // Следующая серия: с начала титров, если в файле есть такая глава, иначе за 30 секунд до конца
         val hasNext = index + 1 < items.size
-        if (hasNext && dur > 5 * 60_000 && dur - pos in 1..30_000 && !nextDismissed && !panelOpen) {
+        val credits = if (dur > 0) Chapters.creditsStart(chapters, dur) else null
+        val from = credits ?: (dur - 30_000)
+        if (hasNext && dur > 5 * 60_000 && pos in from until dur && !nextDismissed && !panelOpen) {
             if (next.visibility != View.VISIBLE) {
                 nextTitle.text = items[index + 1].title
                 next.visibility = View.VISIBLE
                 next.alpha = 0f; next.translationY = 40f
                 next.animate().alpha(1f).translationY(0f).setDuration(300).start()
+                nextFrom = pos
             }
-            nextProgress.update(30_000, 30_000 - (dur - pos), 0, null)
-        } else if (next.visibility == View.VISIBLE && (dur - pos > 30_000 || nextDismissed)) {
+            if (credits != null) {
+                // как в Кинопоиске: отсчёт, и следующая серия сама, если не нажали «Назад»
+                val done = (pos - nextFrom).coerceAtLeast(0)
+                nextProgress.update(CREDITS_COUNTDOWN_MS, done, 0, null)
+                if (done >= CREDITS_COUNTDOWN_MS && e.isPlaying) {
+                    playNext()
+                    return
+                }
+            } else {
+                nextProgress.update(30_000, 30_000 - (dur - pos), 0, null)
+            }
+        } else if (next.visibility == View.VISIBLE && (pos < from || nextDismissed)) {
             next.visibility = View.GONE
         }
 
@@ -691,7 +721,9 @@ class PlayerActivity : Activity(), Engine.Listener {
         lastSave = System.currentTimeMillis()
         val entry = History.Entry(History.key(item.uri), item.uri.toString(),
             intent.getStringExtra("title")?.takeIf { items.size == 1 } ?: item.title, pos, dur, lastSave)
-        if (entry.finished || completed) History.remove(this, entry.key)
+        // дошли до титров: серия просмотрена, в «Продолжить просмотр» её не оставляем
+        val inCredits = Chapters.creditsStart(chapters, dur)?.let { pos >= it } == true
+        if (entry.finished || completed || inCredits) History.remove(this, entry.key)
         else if (pos > 15_000) History.save(this, entry)
     }
 
@@ -710,6 +742,7 @@ class PlayerActivity : Activity(), Engine.Listener {
 
     companion object {
         private const val HOLD = "player"
+        private const val CREDITS_COUNTDOWN_MS = 10_000L
         private val SCRUB_KEYS = setOf(
             KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT,
             KeyEvent.KEYCODE_MEDIA_REWIND, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD,

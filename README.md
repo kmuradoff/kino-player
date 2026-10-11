@@ -32,8 +32,11 @@ Since 0.9 every release has two APKs: `kino-<version>-arm64-v8a.apk` for 64-bit 
 - **Торренты без отдельного TorrServe.** Внутри «Кино» есть свой торрент-движок
   ([TorrServer](https://github.com/YouROK/TorrServer)): magnet-ссылки и .torrent-файлы
   открываются сразу, без других приложений. Можно по-прежнему пользоваться внешним TorrServe.
-- «Продолжить просмотр» на главном экране, предложение следующей серии за 30 секунд до конца,
-  скорость загрузки и число пиров TorrServe.
+- «Продолжить просмотр» на главном экране, скорость загрузки и число пиров TorrServe.
+- **Следующая серия на титрах.** Если в MKV есть глава с титрами («Титры», «Credits»,
+  «Ending», «ED»), с её начала появляется карточка следующей серии и через 10 секунд серия
+  меняется сама (Назад: досмотреть титры). Без такой главы карточка появляется за 30 секунд
+  до конца. В конце серии следующая включается сама.
 - Панель «звук, субтитры, скорость, экран» по кнопке вниз; перемотка ускоряется, пока кнопку
   держат (10 с, 30 с, 1 мин, 2 мин).
 
@@ -120,8 +123,11 @@ Features:
 - **Torrents without a separate TorrServe.** Kino carries its own torrent engine
   ([TorrServer](https://github.com/YouROK/TorrServer)): magnet links and .torrent files open
   directly, no other app needed. An external TorrServe still works too.
-- "Continue watching" on the home screen, a next-episode prompt 30 seconds before the end,
-  TorrServe download speed and peer count.
+- "Continue watching" on the home screen, TorrServe download speed and peer count.
+- **Next episode at the credits.** If an MKV has a credits chapter ("Титры", "Credits",
+  "Ending", "ED"), a next-episode card appears when it starts and the next episode begins after
+  10 seconds (Back keeps the credits). Without such a chapter the card appears 30 seconds before
+  the end. At the end the next episode starts by itself.
 - An audio, subtitles, speed and zoom panel on the Down key; seeking speeds up while the key is
   held (10 s, 30 s, 1 min, 2 min).
 
