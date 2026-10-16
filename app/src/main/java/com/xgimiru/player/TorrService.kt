@@ -78,11 +78,14 @@ class TorrService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         goForeground()   // обязательно после каждого startForegroundService
+        // Режим для Лампы: если система убила процесс «Кино», она перезапустит службу (START_STICKY),
+        // а здесь движок снова берётся в работу. Раньше он оставался выключенным до перезагрузки.
+        if (TorrSettings.shared(this) && SHARED !in holders) hold(this, SHARED)
         if (holders.isEmpty()) {
             main.removeCallbacks(idleStop)
             main.postDelayed(idleStop, IDLE_MS)
         }
-        return START_NOT_STICKY
+        return if (TorrSettings.shared(this)) START_STICKY else START_NOT_STICKY
     }
 
     private fun goForeground() {

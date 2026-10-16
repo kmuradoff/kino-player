@@ -16,8 +16,8 @@ android {
         applicationId 'com.xgimiru.player'
         minSdk 26
         targetSdk 34
-        versionCode 11
-        versionName '0.10'
+        versionCode 12
+        versionName '0.11'
         // версия встроенного TorrServer (тег upstream), для экрана настроек
         buildConfigField 'String', 'TORRSERVER', "\"${rootProject.file('torrserver/VERSION').text.trim()}\""
     }
