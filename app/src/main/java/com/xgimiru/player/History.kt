@@ -62,7 +62,12 @@ object History {
 object TorrServe {
     data class Stat(val speedMbit: Double, val peers: Int, val seeders: Int, val complete: Boolean)
 
-    fun isTorrServe(uri: Uri) = uri.getQueryParameter("link") != null && uri.path?.contains("/stream") == true
+    /** Ссылка TorrServe: /stream и link= с magnet, btih или hash торрента (40 hex), а не любая ссылка с «link». */
+    fun isTorrServe(uri: Uri): Boolean {
+        val link = uri.getQueryParameter("link") ?: return false
+        if (uri.path?.contains("/stream") != true) return false
+        return link.startsWith("magnet:", true) || link.contains("btih:", true) || Regex("^[0-9a-fA-F]{40}$").matches(link)
+    }
 
     /** Блокирующий запрос — вызывать не из главного потока. */
     fun stat(uri: Uri): Stat? = runCatching {
