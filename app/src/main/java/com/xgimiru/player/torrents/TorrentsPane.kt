@@ -74,6 +74,7 @@ class TorrentsPane(private val act: Activity, private val host: Host) : Pane {
     private var lastQuery = ""
     private var seq = 0
     private var searching = false
+    private var searchFocus: View? = null      // где был фокус, когда начали искать
     private val found = LinkedHashMap<String, List<Meta>>()   // недавние ответы TMDB: повторный поиск мгновенный
     private var backdropUrl: String? = null
     private var holding = false
@@ -218,6 +219,7 @@ class TorrentsPane(private val act: Activity, private val host: Host) : Pane {
         // без TMDB: сразу простой список раздач
         if (!Tmdb.enabled) { showIdle(keepFocus = false); FilmActivity.openQuery(act, query); return }
         found[query.lowercase()]?.let { showResults(it); return }
+        searchFocus = act.currentFocus
         setStatus(tr("Ищу «$query»…", "Searching for “$query”…"))
         searching = true
         io.execute {
@@ -243,6 +245,11 @@ class TorrentsPane(private val act: Activity, private val host: Host) : Pane {
     /** Найденные фильмы и сериалы: ряд постеров, над ним описание того, на чём фокус. */
     private fun showResults(metas: List<Meta>) {
         results = metas
+        // на постеры, если фокус там же, где был при поиске, или в рядах, которые сейчас спрячутся;
+        // если его увели с пульта (например, на строку поиска), не трогаем
+        val f = act.currentFocus
+        val toPosters = rowsBox.hasFocus() || searchFocus == null || f === searchFocus
+        searchFocus = null
         parkFocus()
         allPill.visibility = View.VISIBLE
         recentRow.visibility = View.GONE
@@ -263,7 +270,7 @@ class TorrentsPane(private val act: Activity, private val host: Host) : Pane {
         }
         filmsRow.visibility = View.VISIBLE
         focusFilm(metas[0])
-        filmsRow.first()?.requestFocus()
+        if (toPosters) filmsRow.first()?.requestFocus()
     }
 
     private fun focusFilm(m: Meta) {

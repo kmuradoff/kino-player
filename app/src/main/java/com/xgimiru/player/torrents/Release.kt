@@ -140,7 +140,8 @@ class Tags(
             "AVO" to Regex("(?i)\\bavo\\b|\\bап\\b|авторск"),
         )
         private val SEASON_S = Regex("\\bs(\\d{1,2})(?:\\s*-\\s*s?(\\d{1,2}))?(?=e\\d|\\b)")
-        private val SEASON_WORD = Regex("(?:сезон[ыа]?|seasons?)\\s*:?\\s*(\\d{1,2})(?:\\s*-\\s*(\\d{1,2}))?")
+        // «Сезон: 2», «Сезоны 1-3», но не «4 сезон: 1-13 серии» (там после двоеточия серии)
+        private val SEASON_WORD = Regex("(?:сезон[ыа]?|seasons?)\\s*:?\\s*(\\d{1,2})(?!\\d)(?:\\s*-\\s*(\\d{1,2}))?+(?!\\s*(?:сери|эпизод|episod))")
         private val SEASON_BEFORE = Regex("\\b(\\d{1,2})(?:\\s*-\\s*(\\d{1,2}))?\\s*(?:-?й\\s*)?сезон")
         private val SEASON_X = Regex("\\[(\\d{1,2})x\\d{1,3}")
 
