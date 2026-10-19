@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- кнопка диалога: светлая «пилюля» в фокусе, иначе прозрачная -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_focused="true">
+        <inset android:insetLeft="4dp" android:insetRight="4dp" android:insetTop="6dp" android:insetBottom="6dp">
+            <shape><solid android:color="#FFF4EFE6" /><corners android:radius="22dp" /></shape>
+        </inset>
+    </item>
+    <item><color android:color="@android:color/transparent" /></item>
+</selector>
