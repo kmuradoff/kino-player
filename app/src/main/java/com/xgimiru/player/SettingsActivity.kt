@@ -138,7 +138,7 @@ class SettingsActivity : Activity() {
             setPadding(dp(24), dp(8), dp(24), 0)
             addView(input)
         }
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(this, R.style.Lumen_Dialog)
             .setTitle("Адрес TorrServe")
             .setMessage("Например 127.0.0.1:8090 или 192.168.1.10:8090")
             .setView(box)

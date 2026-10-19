@@ -170,9 +170,9 @@ object Time {
     fun human(ms: Long): String {
         val min = (ms / 60000).toInt()
         return when {
-            min >= 60 -> "${min / 60} ч ${min % 60} мин"
-            min > 0 -> "$min мин"
-            else -> "меньше минуты"
+            min >= 60 -> com.xgimiru.player.ui.tr("${min / 60} ч ${min % 60} мин", "${min / 60} h ${min % 60} min")
+            min > 0 -> com.xgimiru.player.ui.tr("$min мин", "$min min")
+            else -> com.xgimiru.player.ui.tr("меньше минуты", "under a minute")
         }
     }
 }

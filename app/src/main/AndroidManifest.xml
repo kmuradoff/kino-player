@@ -5,6 +5,7 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <!-- встроенный торрент-движок (TorrService) и его запуск при включении в режиме для Лампы -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
@@ -99,6 +100,9 @@
         </activity>
 
         <activity android:name=".SettingsActivity" android:exported="false" />
+        <activity android:name=".tv.LiveActivity" android:exported="false" android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation|smallestScreenSize|uiMode"
+            android:theme="@style/Kino.Player" />
 
         <service
             android:name=".TorrService"
