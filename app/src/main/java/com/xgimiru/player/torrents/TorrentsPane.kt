@@ -49,7 +49,12 @@ class TorrentsPane(private val act: Activity, private val host: Host) : Pane {
     private val mineIo = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private val root = FrameLayout(act)
-    override val view: View = root
+    // невидимый «якорь» для фокуса на время перестройки раздела (см. parkFocus)
+    private val anchor = View(act)
+    override val view: View = FrameLayout(act).apply {
+        addView(anchor, Ui.frame(1, 1))
+        addView(root, Ui.frame(-1, -1))
+    }
     private val d = { v: Number -> Ui.dp(act, v) }
 
     private val input = EditText(act)
@@ -90,6 +95,13 @@ class TorrentsPane(private val act: Activity, private val host: Host) : Pane {
     }
 
     private fun build(conf: Boolean) {
+        val hadFocus = root.hasFocus()
+        if (hadFocus) { anchor.isFocusable = true; anchor.requestFocus() }
+        buildViews(conf)
+        if (hadFocus) { focusFirst(); anchor.isFocusable = false }
+    }
+
+    private fun buildViews(conf: Boolean) {
         builtFor = conf
         root.removeAllViews()
         results = null
@@ -123,8 +135,13 @@ class TorrentsPane(private val act: Activity, private val host: Host) : Pane {
             textSize = 20f
             typeface = Ui.sans()
             setSingleLine()
-            imeOptions = EditorInfo.IME_ACTION_SEARCH
+            imeOptions = EditorInfo.IME_ACTION_SEARCH or EditorInfo.IME_FLAG_NO_EXTRACT_UI
             inputType = InputType.TYPE_CLASS_TEXT
+            // вверх и вниз с пульта: сразу к вкладкам или рядам, а не курсор в начало строки
+            setOnKeyListener { v, code, ev ->
+                val dir = when (code) { KeyEvent.KEYCODE_DPAD_UP -> View.FOCUS_UP; KeyEvent.KEYCODE_DPAD_DOWN -> View.FOCUS_DOWN; else -> 0 }
+                dir != 0 && ev.action == KeyEvent.ACTION_DOWN && v.focusSearch(dir)?.requestFocus() == true
+            }
             setPadding(d(22), d(13), d(22), d(13))
             background = Ui.rounded(0x1FF4EFE6, d(30).toFloat())
             setOnFocusChangeListener { _, f -> background = Ui.rounded(if (f) 0x33F4EFE6 else 0x1FF4EFE6, d(30).toFloat(), if (f) d(2) else 0, Ui.INK) }

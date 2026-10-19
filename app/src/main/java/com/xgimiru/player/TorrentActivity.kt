@@ -165,7 +165,16 @@ class TorrentActivity : Activity() {
     }
 
     // ── Список файлов ────────────────────────────────────────────────────────
+    /** Что показано в списке: после возврата из плеера список строится заново (новые отметки и фокус). */
+    private var shown: (() -> Unit)? = null
+
+    override fun onRestart() {
+        super.onRestart()
+        shown?.invoke()
+    }
+
     private fun show(base: String, hash: String, title: String, videos: List<TorrApi.FileInfo>, subs: List<TorrApi.FileInfo>) {
+        shown = { afterPlayer(hash, videos.map { TorrApi.streamUri(base, hash, it, builtin) }); show(base, hash, title, videos, subs) }
         heading.text = title
         if (videos.isEmpty()) {
             fail(tr("В этом торренте нет видео.", "There is no video in this torrent."))
@@ -179,7 +188,7 @@ class TorrentActivity : Activity() {
             return subs.filter { videos.size == 1 || it.name.lowercase().startsWith(stem) }
                 .map { TorrApi.streamUri(base, hash, it, builtin) }
         }
-        fun play(i: Int) = play(title, uris, names, i, videos.indices.map(::subsFor))
+        fun play(i: Int) { markOpened(hash, i); play(title, uris, names, i, videos.indices.map(::subsFor)) }
         if (videos.size == 1) {
             play(0)
             finish()
@@ -205,27 +214,49 @@ class TorrentActivity : Activity() {
             rows[i] = row
             list.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = d(4) })
         }
-        val focus = resumeIndex(uris, history, seasons, intent.getIntExtra(EXTRA_SEASON, 0))
+        val focus = resumeIndex(hash, uris, history, seasons, intent.getIntExtra(EXTRA_SEASON, 0))
         list.post { rows[focus]?.requestFocus() }
     }
 
     /**
-     * С какой серии продолжить: последняя открытая, а если её досмотрели, то следующая. Ничего не
-     * смотрели, а на странице сериала выбран сезон: первая серия этого сезона.
+     * С какой серии продолжить. Плеер убирает досмотренную серию из истории, поэтому кроме истории
+     * помним, какую серию открывали отсюда ([opened]). Последнее по времени и решает: недосмотренная
+     * серия из истории или открытая отсюда (а если её досмотрели, то следующая). Ничего не смотрели,
+     * а на странице сериала выбран сезон: первая серия этого сезона.
      */
-    private fun resumeIndex(uris: List<Uri>, history: Map<String, History.Entry>, seasons: List<Int?>, season: Int): Int {
+    private fun resumeIndex(hash: String, uris: List<Uri>, history: Map<String, History.Entry>, seasons: List<Int?>, season: Int): Int {
         var focus = -1
         var latest = 0L
         uris.forEachIndexed { i, u ->
             val e = history[History.key(u)]
             if (e != null && e.updated > latest) { latest = e.updated; focus = i }
         }
-        if (focus >= 0) {
-            val e = history[History.key(uris[focus])]
-            return if (e != null && e.finished && focus + 1 < uris.size) focus + 1 else focus
-        }
+        val rec = opened(hash)
+        if (rec != null && rec.second > latest && rec.first in uris.indices) return rec.first
+        if (focus >= 0) return focus
         if (season > 0) seasons.indexOfFirst { it == season }.takeIf { it >= 0 }?.let { return it }
         return 0
+    }
+
+    private fun prefs() = getSharedPreferences("torrent_opened", MODE_PRIVATE)
+
+    /** Какую серию торрента открывали отсюда последней и когда. */
+    private fun opened(hash: String): Pair<Int, Long>? = prefs().getString(hash, null)?.split('|')?.let {
+        val i = it.getOrNull(0)?.toIntOrNull(); val t = it.getOrNull(1)?.toLongOrNull()
+        if (i != null && t != null) i to t else null
+    }
+
+    private fun markOpened(hash: String, i: Int) = prefs().edit().putString(hash, "$i|${System.currentTimeMillis()}").apply()
+
+    /**
+     * Вернулись из плеера. Серии, открытой отсюда, в истории нет, а смотрели дольше 10 минут: её
+     * досмотрели (плеер убрал её из истории), продолжать со следующей.
+     */
+    private fun afterPlayer(hash: String, uris: List<Uri>) {
+        val rec = opened(hash) ?: return
+        val history = History.all(this).associateBy { it.key }
+        val newer = uris.any { (history[History.key(it)]?.updated ?: 0L) >= rec.second }
+        if (!newer && System.currentTimeMillis() - rec.second > 10 * 60_000L && rec.first + 1 < uris.size) markOpened(hash, rec.first + 1)
     }
 
     private fun row(name: String, f: TorrApi.FileInfo, e: History.Entry?, onClick: () -> Unit): View =

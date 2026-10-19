@@ -277,9 +277,9 @@ object Sources {
         // сервер ответил, но не так (5xx, странный JSON): это и показываем; «здесь нет поиска»: общий совет
         errs.firstOrNull { it is SearchError && it !is NotHere }?.let { throw SearchError(explain(it)) }
         if (errs.any { it is NotHere } || errs.isEmpty()) throw SearchError(when (s.type) {
-            Api.JSON -> tr("по этому адресу нет JSON API Jackett. Проверьте адрес или выберите «Автоматически»", "no Jackett JSON API at this address. Check it or choose Automatic")
-            Api.TORZNAB -> tr("по этому адресу нет Torznab. Проверьте адрес или выберите «Автоматически»", "no Torznab at this address. Check it or choose Automatic")
-            Api.AUTO -> tr("по этому адресу нет ни JSON API Jackett, ни Torznab. Проверьте адрес", "neither the Jackett JSON API nor Torznab answers at this address. Check it")
+            Api.JSON -> tr("по этому адресу нет JSON API Jackett. Проверьте адрес или выберите «Автоматически».", "no Jackett JSON API at this address. Check it or choose Automatic.")
+            Api.TORZNAB -> tr("по этому адресу нет Torznab. Проверьте адрес или выберите «Автоматически».", "no Torznab at this address. Check it or choose Automatic.")
+            Api.AUTO -> tr("по этому адресу нет ни JSON API Jackett, ни Torznab. Проверьте адрес.", "neither the Jackett JSON API nor Torznab answers at this address. Check it.")
         })
         throw SearchError(explain(errs.first()))
     }

@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.text.InputType
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
@@ -205,8 +206,13 @@ class SourcesActivity : Activity() {
         textSize = 18f; typeface = Ui.sans()
         setSingleLine()
         inputType = if (uri) InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI else InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-        imeOptions = EditorInfo.IME_ACTION_DONE
+        imeOptions = EditorInfo.IME_ACTION_DONE or EditorInfo.IME_FLAG_NO_EXTRACT_UI
         setPadding(d(20), d(12), d(20), d(12))
+        // вверх и вниз с пульта: сразу к соседнему полю, а не курсор в начало или конец строки
+        setOnKeyListener { v, code, ev ->
+            val dir = when (code) { KeyEvent.KEYCODE_DPAD_UP -> View.FOCUS_UP; KeyEvent.KEYCODE_DPAD_DOWN -> View.FOCUS_DOWN; else -> 0 }
+            dir != 0 && ev.action == KeyEvent.ACTION_DOWN && v.focusSearch(dir)?.requestFocus() == true
+        }
         background = Ui.rounded(0x1FF4EFE6, d(26).toFloat())
         setOnFocusChangeListener { _, f -> background = Ui.rounded(if (f) 0x33F4EFE6 else 0x1FF4EFE6, d(26).toFloat(), if (f) d(2) else 0, Ui.INK) }
         addTextChangedListener(object : android.text.TextWatcher {

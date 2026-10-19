@@ -272,7 +272,9 @@ class FilmActivity : Activity() {
 
     private fun chooseSeason() {
         val fromTmdb = details?.seasons.orEmpty()
-        val nums = (fromTmdb.map { it.number } + relevant.flatMap { it.tags.seasons }).filter { it in 1..80 }.distinct().sorted()
+        // сезоны из TMDB, а без него те, что нашлись в названиях раздач
+        val nums = (if (fromTmdb.isNotEmpty()) fromTmdb.map { it.number } else relevant.flatMap { it.tags.seasons })
+            .filter { it in 1..80 }.distinct().sorted()
         val labels = listOf(tr("Все сезоны", "All seasons")) + nums.map { n ->
             val s = fromTmdb.firstOrNull { it.number == n }
             listOfNotNull(tr("Сезон $n", "Season $n"),
@@ -379,8 +381,11 @@ class FilmActivity : Activity() {
             2 -> l.sortedByDescending { it.size }
             3 -> l.sortedBy { it.size }
             4 -> l.sortedByDescending { it.time }
-            // явный сезон раздачи выше раздач без пометки сезона
-            else -> l.sortedByDescending { (scores[it.key] ?: 0.0) + (if (season > 0 && season in it.tags.seasons) 15 else 0) }
+            // раздача ровно этого сезона выше сборников, сборники выше раздач без пометки сезона
+            else -> l.sortedByDescending { r ->
+                val ss = r.tags.seasons
+                (scores[r.key] ?: 0.0) + when { season == 0 -> 0; ss.size == 1 && season in ss -> 15; season in ss -> 6; else -> 0 }
+            }
         }
         rows = sorted.toList()
         adapter.notifyDataSetChanged()
