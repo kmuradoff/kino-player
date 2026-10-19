@@ -57,6 +57,7 @@ class FilmActivity : Activity() {
         }
     }
 
+    private val MENU_HINT = tr("   Меню на раздаче: подробнее.", "   Menu on a release: details.")
     private val io = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private val d = { v: Number -> Ui.dp(this, v) }
@@ -139,6 +140,8 @@ class FilmActivity : Activity() {
             itemsCanFocus = false
             adapter = this@FilmActivity.adapter
             setOnItemClickListener { _, _, p, _ -> item(p)?.let { open(it) } }
+            // долгое нажатие OK: всё о раздаче (название целиком, трекеры, озвучки)
+            setOnItemLongClickListener { _, _, p, _ -> item(p)?.let { about(it) }; true }
             // вверх с первой раздачи: на тот фильтр, где были в последний раз
             setOnKeyListener { _, code, ev ->
                 if (ev.action == KeyEvent.ACTION_DOWN && code == KeyEvent.KEYCODE_DPAD_UP && selectedItemPosition <= 0) {
@@ -190,6 +193,11 @@ class FilmActivity : Activity() {
     override fun onPause() { backdrop.pause(); super.onPause() }
 
     override fun onDestroy() { io.shutdownNow(); main.removeCallbacksAndMessages(null); super.onDestroy() }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_MENU && list.hasFocus()) { item(list.selectedItemPosition)?.let { about(it) }; return true }
+        return super.onKeyDown(keyCode, event)
+    }
 
     override fun dispatchKeyEvent(e: KeyEvent): Boolean {
         if (e.action == KeyEvent.ACTION_DOWN && e.keyCode in setOf(KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN,
@@ -401,8 +409,8 @@ class FilmActivity : Activity() {
             total == 0 && searchedOnce -> (errors.firstOrNull() ?: tr("Раздач не нашлось.", "No releases found."))
             searching -> tr("Раздач: $total. Ищу ещё…", "Releases: $total. Looking for more…")
             rows.isEmpty() && total > 0 -> tr("С этими фильтрами раздач нет: всего $total.", "No releases with these filters, $total in total.")
-            filtered < total -> tr("Раздач: $total, показано $filtered.", "Releases: $total, shown $filtered.")
-            else -> tr("Раздач: $total.", "Releases: $total.")
+            filtered < total -> tr("Раздач: $total, показано $filtered.", "Releases: $total, shown $filtered.") + MENU_HINT
+            else -> tr("Раздач: $total.", "Releases: $total.") + MENU_HINT
         } + (if (errors.isNotEmpty() && total > 0) "  " + errors.joinToString("; ") else "")
     }
 
@@ -421,6 +429,24 @@ class FilmActivity : Activity() {
             .putExtra(TorrentActivity.EXTRA_POSTER, m?.poster("w342"))
             .putExtra(TorrentActivity.EXTRA_BACKDROP, m?.backdrop("w1280"))
             .putExtra(TorrentActivity.EXTRA_SEASON, s))
+    }
+
+    /** Подробно о раздаче: название не обрезано, все трекеры и озвучки. Меню или долгое OK. */
+    private fun about(r: Release) {
+        val g = r.tags
+        val lines = listOfNotNull(
+            (g.badges + listOfNotNull(g.seasons.takeIf { it.isNotEmpty() }?.let { ReleaseRow.seasonsLabel(it) })).joinToString("  ·  ").ifEmpty { null },
+            humanSize(r.size).ifEmpty { null }?.let { tr("Размер: $it", "Size: $it") },
+            tr("Сиды: ${r.seeders}, пиры: ${r.peers}", "Seeders: ${r.seeders}, peers: ${r.peers}"),
+            g.voices.takeIf { it.isNotEmpty() }?.let { tr("Озвучка: ", "Voice-over: ") + it.joinToString(", ") },
+            r.tracker?.let { tr("Трекеры: $it", "Trackers: $it") },
+        )
+        AlertDialog.Builder(this, R.style.Lumen_Dialog)
+            .setTitle(r.title)
+            .setMessage(lines.joinToString("\n"))
+            .setPositiveButton(tr("Смотреть", "Watch")) { _, _ -> open(r) }
+            .setNegativeButton(tr("Закрыть", "Close"), null)
+            .show()
     }
 
     private inner class Adapter : BaseAdapter() {
