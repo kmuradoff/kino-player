@@ -33,6 +33,7 @@ class HomePane(private val act: Activity, private val host: Host, private val go
     private val frame = android.widget.FrameLayout(act).apply { clipChildren = false; clipToPadding = false }
     override val view: View = frame
     private val rows = ArrayList<Row>()
+    private val io = java.util.concurrent.Executors.newFixedThreadPool(2)
 
     // высота с запасом: ряды не сжимаются, лишнее уходит за край и выезжает, когда на ряду фокус
     init { frame.addView(root, Ui.frame(-1, Ui.dp(act, 1400)).apply { topMargin = Ui.dp(act, 250) }) }
@@ -103,15 +104,26 @@ class HomePane(private val act: Activity, private val host: Host, private val go
             tr("осталось ", "") + Time.human(e.duration - e.position) + tr("", " left"),
         ).joinToString(" · ")
         c.progress(e.progress)
-        val art = Art.file(act, e.key).takeIf { it.exists() }?.let { "file://" + it.path }
+        val frame = Art.file(act, e.key).takeIf { it.exists() }?.let { "file://" + it.path }
+        var art = frame
+        var meta: com.xgimiru.player.net.Meta? = null
         Img.load(c.image, art, 600)
+        // обложка и описание из TMDB вместо случайного кадра; пришли — тихо подменяем
+        io.execute {
+            val m = com.xgimiru.player.net.Tmdb.find(act, n.title, n.year, if (n.episode != null) true else null) ?: return@execute
+            act.runOnUiThread {
+                meta = m
+                m.backdrop("w780")?.let { art = m.backdrop("w1280"); Img.load(c.image, it, 600) }
+                if (c.isFocused) c.onFocus?.invoke(true)
+            }
+        }
         c.onFocus = { f ->
             if (f) {
                 host.backdrop(art)
-                host.info(tr("Продолжить", "Continue"), n.title,
+                host.info(tr("Продолжить", "Continue"), meta?.title ?: n.title,
                     listOfNotNull(if (n.episode != null) tr("Сезон ${n.season ?: 1} · Серия ${n.episode}", "Season ${n.season ?: 1} · Episode ${n.episode}") else n.year,
                         tr("осталось ", "") + Time.human(e.duration - e.position) + tr("", " left")).joinToString(" · "),
-                    null, e.progress)
+                    meta?.overview, e.progress)
             }
         }
         c.setOnClickListener {

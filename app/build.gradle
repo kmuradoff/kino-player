@@ -20,6 +20,10 @@ android {
         versionName '0.12'
         // версия встроенного TorrServer (тег upstream), для экрана настроек
         buildConfigField 'String', 'TORRSERVER', "\"${rootProject.file('torrserver/VERSION').text.trim()}\""
+        // Ключ TMDB (обложки, описания, поиск фильмов) — только с машины сборки, в git его нет:
+        // путь в local.properties (lumen.tmdbKeyFile), иначе ~/.lumen-keys/tmdb.txt. Без файла — пустая строка, TMDB выключен.
+        def tmdbFile = new File((local['lumen.tmdbKeyFile'] ?: System.getProperty('user.home') + '/.lumen-keys/tmdb.txt') as String)
+        buildConfigField 'String', 'TMDB_KEY', "\"${tmdbFile.exists() ? tmdbFile.text.trim() : ''}\""
     }
     buildFeatures { buildConfig true }
 

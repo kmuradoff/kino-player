@@ -116,6 +116,8 @@ object Net {
 
     fun open(url: String, timeoutMs: Int = 20_000): InputStream {
         if (url.startsWith("/") || url.startsWith("file://")) return gunzip(File(url.removePrefix("file://")).inputStream())
+        // TMDB в некоторых сетях спрятан DNS-ом: адрес через DNS-over-HTTPS (см. Resolve)
+        if (Regex("^https://[^/]*(tmdb\\.org|themoviedb\\.org)/").containsMatchIn(url)) return gunzip(com.xgimiru.player.net.Resolve.open(url, timeoutMs))
         var u = URL(url)
         repeat(5) {
             val c = u.openConnection() as HttpURLConnection
