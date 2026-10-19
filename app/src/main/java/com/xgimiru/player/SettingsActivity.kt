@@ -97,7 +97,7 @@ class SettingsActivity : Activity() {
             row("Авто: ${TorrSettings.autoCacheMb(this)} МБ", "по памяти устройства, %.1f ГБ".format(ram / 1024.0), cur == 0) {
                 setCache(0)
             }
-            for (mb in listOf(48, 64, 96, 128, 192, 256)) row("$mb МБ", null, cur == mb) { setCache(mb) }
+            for (mb in listOf(48, 64, 96, 128, 192, 256, 384, 512)) row("$mb МБ", null, cur == mb) { setCache(mb) }
 
             header("Для Лампы и других приложений")
             val shared = TorrSettings.shared(this)

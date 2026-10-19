@@ -369,6 +369,7 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
         PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ->
             "Источник не отвечает. Если это торрент — проверьте, что TorrServe запущен и у раздачи есть сиды."
         PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS -> "Сервер отказал в доступе к видео."
+        in 2000..2999 -> "Видео не загружается: источник отвечает слишком медленно или оборвал связь."
         else -> "Формат не поддерживается (${e.errorCodeName.removePrefix("ERROR_CODE_").lowercase()})."
     }
 }

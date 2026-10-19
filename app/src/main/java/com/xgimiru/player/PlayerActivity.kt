@@ -79,6 +79,8 @@ class PlayerActivity : Activity(), Engine.Listener {
     private var fellBack = false        // уже переключались на запасной движок для этого файла
     private var ownTorrents = false     // в списке есть видео со встроенного торрент-движка
     private var engineRestarted = false // перезапускали встроенный движок после сбоя этого файла
+    private var torrRetries = 0         // повторы торрента, который не успел подгрузиться
+    private var torrRetryIndex = -1
     private var startFrom = 0L          // с какой позиции открывали текущий файл (для «попробовать ещё раз»)
     private var chapters: List<Chapters.Chapter> = emptyList()  // главы текущего файла: где титры
     private var chaptersOf: Uri? = null // чьи главы прочитаны или читаются
@@ -315,6 +317,21 @@ class PlayerActivity : Activity(), Engine.Listener {
             // встроенный движок остановился (простой в фоне, сбой): поднять и продолжить с того же места
             engineRestarted = true
             play(index, engine?.position ?: 0L, forceVlc = engineIsVlc)
+            return
+        }
+        if (item != null && TorrServe.isTorrServe(item.uri) && !fallback) {
+            // торрент не успел подгрузиться (мало сидов, медленная сеть): движок это не «формат не тот»,
+            // а пауза в данных. Ждём и продолжаем с того же места, до 5 раз на одну серию.
+            if (torrRetryIndex != index) { torrRetryIndex = index; torrRetries = 0 }
+            if (torrRetries < 5) {
+                torrRetries++
+                val pos = engine?.position ?: 0L
+                onBuffering(true, 0)
+                handler.postDelayed({ if (!isFinishing) play(index, pos, forceVlc = engineIsVlc) }, 4000)
+                return
+            }
+            errorText.text = "Торрент не успевает загружаться: у раздачи мало сидов или медленная сеть."
+            error.visibility = View.VISIBLE
             return
         }
         if (fallback && !engineIsVlc && !fellBack) {

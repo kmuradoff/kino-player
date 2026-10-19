@@ -53,16 +53,19 @@ object TorrSettings {
 
     fun effectiveCacheMb(ctx: Context) = cacheMb(ctx).takeIf { it > 0 } ?: autoCacheMb(ctx)
 
-    /** 48 МБ до 1,2 ГБ памяти, 64 до 1,8, 96 до 2,5, дальше 128. */
+    /** 48 МБ до 1,2 ГБ памяти, 64 до 1,8, 96 до 2,5, дальше 256: 4K-ремуксу нужен запас на 20-30 секунд. */
     fun autoCacheMb(ctx: Context): Int {
         val mb = totalRamMb(ctx)
         return when {
             mb < 1229 -> 48
             mb < 1843 -> 64
             mb < 2560 -> 96
-            else -> 128
+            else -> 256
         }
     }
+
+    /** Одновременных соединений с пирами. У TorrServer по умолчанию 25: на раздаче в сотни пиров качали 16. */
+    const val CONNECTIONS = 100
 
     fun totalRamMb(ctx: Context): Long {
         val info = ActivityManager.MemoryInfo()
@@ -219,7 +222,7 @@ object TorrEngine {
     }
 
     /**
-     * Свои настройки: кэш по памяти устройства, без DLNA и объявлений в локальной сети (Bonjour).
+     * Свои настройки: кэш по памяти устройства, 100 соединений, без DLNA и объявлений в локальной сети (Bonjour).
      * Смена настроек перезапускает торрент-клиент внутри движка, поэтому только если что-то отличается.
      */
     fun applySettings(ctx: Context) {
@@ -227,6 +230,9 @@ object TorrEngine {
         val cache = TorrSettings.effectiveCacheMb(ctx) * 1024L * 1024L
         var changed = false
         if (sets.optLong("CacheSize") != cache) { sets.put("CacheSize", cache); changed = true }
+        if (sets.optInt("ConnectionsLimit") < TorrSettings.CONNECTIONS) {
+            sets.put("ConnectionsLimit", TorrSettings.CONNECTIONS); changed = true
+        }
         for (k in listOf("EnableBonjour", "EnableDLNA")) {
             if (sets.optBoolean(k)) { sets.put(k, false); changed = true }
         }
