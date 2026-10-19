@@ -20,6 +20,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
+import com.xgimiru.player.dlna.PlayerBridge
 
 /**
  * Плеер «Кино». Интерфейс свой, движков два (см. [Engine]): Media3 для современных
@@ -27,7 +28,7 @@ import java.util.concurrent.Executors
  * Лампа и другие приложения передают внешним плеерам (MX Player / VLC), и возвращает,
  * где остановились.
  */
-class PlayerActivity : Activity(), Engine.Listener {
+class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
 
     private data class Item(val uri: Uri, val title: String, val subs: List<Uri>)
 
@@ -117,6 +118,7 @@ class PlayerActivity : Activity(), Engine.Listener {
     }
 
     override fun onDestroy() {
+        PlayerBridge.detach(this, completed)
         if (ownTorrents) TorrService.release(this, HOLD)
         handler.removeCallbacksAndMessages(null)
         io.shutdownNow()
@@ -158,6 +160,7 @@ class PlayerActivity : Activity(), Engine.Listener {
     // ── Открытие ─────────────────────────────────────────────────────────────
     private fun open(intent: Intent) {
         val uri = intent.data ?: run { finish(); return }
+        PlayerBridge.attach(this)
         val baseTitle = intent.getStringExtra("title") ?: intent.getStringExtra("forcename")
             ?: intent.getStringExtra("name") ?: Formats.titleFromPath(uri.lastPathSegment ?: uri.path)
 
@@ -272,6 +275,7 @@ class PlayerActivity : Activity(), Engine.Listener {
 
     // ── События движка ───────────────────────────────────────────────────────
     override fun onStateChanged() {
+        reportRemote()
         val playing = engine?.isPlaying == true
         if (playing) { paused = false; engineRestarted = false }
         dim.animate().alpha(if (playing || loading) 0f else if (paused) 1f else 0f).setDuration(250).start()
@@ -350,6 +354,7 @@ class PlayerActivity : Activity(), Engine.Listener {
     // ── Отрисовка ────────────────────────────────────────────────────────────
     private val tick = object : Runnable {
         override fun run() {
+            reportRemote()
             updateTimes()
             handler.postDelayed(this, 500)
         }
@@ -507,6 +512,29 @@ class PlayerActivity : Activity(), Engine.Listener {
         toast.animate().alpha(0f).setDuration(300).start()
         resumedFrom = null
     }
+
+    // ── DLNA: состояние для телефона и его команды (см. dlna/PlayerBridge) ──
+    private fun reportRemote() {
+        val e = engine
+        val state = when {
+            error.visibility == View.VISIBLE || completed -> PlayerBridge.State.STOPPED
+            e?.isPlaying == true -> PlayerBridge.State.PLAYING
+            paused -> PlayerBridge.State.PAUSED
+            else -> PlayerBridge.State.LOADING
+        }
+        PlayerBridge.report(this, current()?.uri?.toString(), state, e?.position ?: 0L, e?.duration ?: 0L)
+    }
+
+    override fun remotePlay() { if (paused && error.visibility != View.VISIBLE) togglePlay() }
+    override fun remotePause() { if (!paused && engine != null) togglePlay() }
+    override fun remoteSeek(ms: Long) {
+        val e = engine ?: return
+        val dur = e.duration
+        e.seekTo(if (dur > 0) ms.coerceIn(0, dur - 1000) else ms)
+        showControls(3000)
+        updateTimes()
+    }
+    override fun remoteStop() = finishWithResult()
 
     // ── Пульт ────────────────────────────────────────────────────────────────
     override fun dispatchKeyEvent(e: KeyEvent): Boolean {

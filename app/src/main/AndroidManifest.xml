@@ -10,6 +10,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- DLNA-рендерер (dlna/DlnaService): поиск SSDP по Wi-Fi, смена сети, открытие плеера из фона -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- «Продолжить просмотр» лаунчера: свои строки WatchNextPrograms -->
     <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />
 
@@ -117,6 +122,20 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <!-- DLNA: телефоны и компьютеры видят Lumen Play как телевизор -->
+        <service
+            android:name=".dlna.DlnaService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+        <receiver android:name=".dlna.DlnaService$Boot" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+        <activity android:name=".dlna.ImageActivity" android:exported="false" android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation|smallestScreenSize|uiMode"
+            android:theme="@style/Kino.Player" />
 
         <!-- ответ системного установщика на обновление «Кино» (Updater) -->
         <receiver android:name=".Updater$Done" android:exported="false" />

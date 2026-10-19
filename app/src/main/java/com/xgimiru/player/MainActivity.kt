@@ -172,6 +172,8 @@ class MainActivity : Activity(), Host {
         if (!updating) Updater.check(this, testUrl != null) { showUpdate(it) }
         // встроенный движок для Лампы: поднять, если ещё не работает (после обновления и т. п.)
         if (TorrSettings.shared(this)) TorrService.hold(this, TorrService.SHARED)
+        // DLNA: Lumen Play виден телефонам как телевизор (если не выключено в настройках)
+        com.xgimiru.player.dlna.DlnaService.sync(this)
     }
 
     override fun onPause() {

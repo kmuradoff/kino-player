@@ -121,6 +121,7 @@ class SettingsActivity : Activity() {
             note("TorrServer: GPL-3.0, github.com/YouROK/TorrServer. Журнал движка: " +
                 "Android/data/$packageName/files/torrserver.log")
         }
+        com.xgimiru.player.dlna.DlnaSettings.section(this, { header(it) }) { t, h, s, c -> row(t, h, s, c) }
         val target = focus?.let { list.getChildAt(it) }?.takeIf { it.isFocusable }
             ?: (0 until list.childCount).map { list.getChildAt(it) }.firstOrNull { it.isFocusable && it.tag == "selected" }
         // после разметки: иначе фокус достаётся самому списку
