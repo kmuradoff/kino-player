@@ -65,6 +65,10 @@
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
         </activity>
+        <!-- страница фильма с раздачами и источники поиска торрентов -->
+        <activity android:name=".torrents.FilmActivity" android:exported="false" />
+        <activity android:name=".torrents.SourcesActivity" android:exported="false"
+            android:windowSoftInputMode="adjustPan" />
         <!-- magnet-ссылки и .torrent-файлы: встроенный движок или внешний TorrServe -->
         <activity
             android:name=".TorrentActivity"

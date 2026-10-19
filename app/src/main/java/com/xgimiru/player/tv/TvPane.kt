@@ -79,6 +79,8 @@ class TvPane(private val act: Activity, private val host: Host) : Pane {
 
     private fun build() {
         root.removeAllViews()
+        // списки и предпросмотр живут дольше разметки: при повторном показе отцепить от старой
+        for (v in listOf<View>(groupList, channelList, preview, pName, pTime, pNow, pDesc, pNext)) (v.parent as? android.view.ViewGroup)?.removeView(v)
         if (Iptv.playlists(act).isEmpty()) {
             root.addView(emptyState(act, tr("ТВ", "TV"),
                 tr("Добавьте ссылку на плейлист IPTV (M3U), который вам дал провайдер или сервис. Программа передач подтянется сама, если она указана в плейлисте.",

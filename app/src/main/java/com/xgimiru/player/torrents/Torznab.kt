@@ -1,89 +1,32 @@
 package com.xgimiru.player.torrents
 
-import android.content.Context
-import android.net.Uri
+import android.util.JsonReader
+import android.util.JsonToken
 import android.util.Xml
-import com.xgimiru.player.tv.Net
-import com.xgimiru.player.ui.tr
 import org.xmlpull.v1.XmlPullParser
-import java.io.IOException
-import java.net.URLEncoder
+import java.io.StringReader
+import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Locale
-
-/** Результат поиска. [link] — magnet или ссылка на .torrent. */
-data class Release(
-    val title: String,
-    val link: String,
-    val size: Long,
-    val seeders: Int,
-    val peers: Int,
-    val tracker: String?,
-    val hash: String?,
-    val date: String?,
-) {
-    /** Значки качества из названия раздачи. */
-    val badges: List<String> by lazy {
-        val t = title.lowercase(Locale.ROOT)
-        val out = ArrayList<String>()
-        when {
-            Regex("2160p|\\b4k\\b|\\buhd\\b").containsMatchIn(t) -> out += "4K"
-            "1080p" in t || "1080i" in t -> out += "1080p"
-            "720p" in t -> out += "720p"
-        }
-        if (Regex("\\b(dv|dovi|dolby ?vision)\\b").containsMatchIn(t)) out += "DV"
-        if (Regex("\\bhdr10\\+").containsMatchIn(t)) out += "HDR10+" else if (Regex("\\bhdr(10)?\\b").containsMatchIn(t)) out += "HDR"
-        if ("remux" in t) out += "Remux"
-        if (Regex("\\batmos\\b").containsMatchIn(t)) out += "Atmos"
-        out
-    }
-}
+import java.util.TimeZone
 
 /**
- * Поиск по Torznab: Jackett, Prowlarr и другие совместимые серверы, которые настроил сам пользователь.
- * Своих источников в Lumen Play нет. Адрес — то, что Jackett показывает как «Torznab feed», например
- * http://192.168.1.10:9117/api/v2.0/indexers/all/results/torznab/ (можно без /api на конце).
+ * Разбор ответов источников. Два формата: Torznab (XML, его отдают Jackett и Prowlarr) и JSON API
+ * Jackett (/api/v2.0/indexers/all/results, его же повторяют открытые совместимые сервисы). Сеть и
+ * выбор формата: в [Sources].
  */
 object Torznab {
-    private const val PREFS = "torznab"
 
-    fun url(ctx: Context): String? = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("url", null)
-    fun key(ctx: Context): String? = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("key", null)
-    fun configured(ctx: Context) = url(ctx) != null
-
-    fun save(ctx: Context, url: String?, key: String?) {
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString("url", url?.trim()?.ifEmpty { null }?.let { normalize(it) })
-            .putString("key", key?.trim()?.ifEmpty { null })
-            .apply()
+    /** Ошибка Torznab (<error code=".." description=".."/>) или null. */
+    fun error(xml: String): String? {
+        if (!xml.contains("<error", true)) return null
+        return Regex("description=\"([^\"]*)\"").find(xml)?.groupValues?.get(1) ?: "error"
     }
 
-    fun normalize(u: String): String {
-        var s = u.trim()
-        if (!s.contains("://")) s = "http://$s"
-        s = s.removeSuffix("/")
-        if (!s.endsWith("/api")) s += "/api"
-        return s
-    }
-
-    /** Поиск. Блокирующий: не из главного потока. Результаты без повторов (по hash или названию), по сидам. */
-    fun search(ctx: Context, query: String): List<Release> {
-        val base = url(ctx) ?: throw IOException(tr("поиск не настроен", "search is not set up"))
-        val q = URLEncoder.encode(query, "UTF-8")
-        val k = key(ctx)?.let { "&apikey=" + URLEncoder.encode(it, "UTF-8") } ?: ""
-        val text = try { Net.text("$base?t=search&q=$q$k") }
-            catch (e: IOException) { throw IOException(tr("сервер поиска не ответил: ${e.message}", "the search server did not answer: ${e.message}")) }
-        if (text.contains("<error", true)) {
-            val msg = Regex("description=\"([^\"]*)\"").find(text)?.groupValues?.get(1)
-            throw IOException(msg ?: tr("сервер поиска вернул ошибку", "the search server returned an error"))
-        }
-        val seen = HashSet<String>()
-        return parse(text).filter { seen.add(it.hash?.lowercase() ?: it.title.lowercase()) }.sortedByDescending { it.seeders }
-    }
-
-    private fun parse(xml: String): List<Release> {
+    fun parse(xml: String): List<Release> {
         val p = Xml.newPullParser()
         p.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
-        p.setInput(xml.reader())
+        p.setInput(StringReader(xml))
         val out = ArrayList<Release>()
         var inItem = false
         var title = ""; var link: String? = null; var magnet: String? = null; var size = 0L
@@ -104,7 +47,7 @@ object Torznab {
                         when (p.getAttributeValue(null, "name")) {
                             "seeders" -> seeders = v.toIntOrNull() ?: 0
                             "peers" -> peers = v.toIntOrNull() ?: 0
-                            "infohash" -> hash = v
+                            "infohash" -> hash = v.lowercase(Locale.ROOT)
                             "magneturl" -> magnet = v
                             "size" -> if (size == 0L) size = v.toLongOrNull() ?: 0
                         }
@@ -113,21 +56,96 @@ object Torznab {
             } else if (ev == XmlPullParser.END_TAG && p.name == "item") {
                 inItem = false
                 val l = magnet ?: link
-                if (l != null && title.isNotBlank()) out += Release(title, l, size, seeders, peers, tracker, hash, date)
+                if (l != null && title.isNotBlank()) out += Release(title, l, size, seeders, peers, tracker,
+                    hash ?: Release.hashOf(l), date, time(date))
             }
             ev = p.next()
         }
         return out
     }
 
-    fun human(bytes: Long): String = when {
-        bytes >= 1L shl 30 -> String.format(Locale.US, "%.1f %s", bytes / (1L shl 30).toDouble(), tr("ГБ", "GB"))
-        bytes >= 1L shl 20 -> String.format(Locale.US, "%.0f %s", bytes / (1L shl 20).toDouble(), tr("МБ", "MB"))
-        else -> ""
+    /** Результаты JSON API Jackett. smart: сервер сам понимает title/title_original/year (поле «jacred»). */
+    class JsonPage(val releases: List<Release>, val smart: Boolean)
+
+    fun parseJson(body: String): JsonPage {
+        val r = JsonReader(StringReader(body)).apply { isLenient = true }
+        val out = ArrayList<Release>()
+        var smart = false
+        var sawResults = false
+        r.beginObject()
+        while (r.hasNext()) {
+            when (r.nextName()) {
+                "Results" -> {
+                    sawResults = true
+                    if (r.peek() == JsonToken.NULL) r.nextNull() else {
+                        r.beginArray()
+                        while (r.hasNext()) readResult(r)?.let { out += it }
+                        r.endArray()
+                    }
+                }
+                "jacred" -> { smart = true; r.skipValue() }
+                else -> r.skipValue()
+            }
+        }
+        r.endObject()
+        if (!sawResults) throw java.io.IOException("no Results")
+        return JsonPage(out, smart)
     }
 
-    fun open(ctx: Context, r: Release) {
-        ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, Uri.parse(r.link))
-            .setClass(ctx, com.xgimiru.player.TorrentActivity::class.java))
+    private fun readResult(r: JsonReader): Release? {
+        var title = ""; var tracker: String? = null; var size = 0L; var seeders = 0; var peers = 0
+        var magnet: String? = null; var link: String? = null; var hash: String? = null; var date: String? = null
+        var quality = 0; var hdr = false; val voices = ArrayList<String>(); val seasons = ArrayList<Int>()
+        r.beginObject()
+        while (r.hasNext()) {
+            val name = r.nextName()
+            if (r.peek() == JsonToken.NULL) { r.nextNull(); continue }
+            when (name) {
+                "Title" -> title = r.nextString().trim()
+                "Tracker" -> tracker = r.nextString()
+                "Size" -> size = runCatching { r.nextLong() }.getOrDefault(0L)
+                "Seeders" -> seeders = runCatching { r.nextInt() }.getOrDefault(0)
+                "Peers" -> peers = runCatching { r.nextInt() }.getOrDefault(0)
+                "MagnetUri" -> magnet = r.nextString().ifBlank { null }
+                "Link" -> link = r.nextString().ifBlank { null }
+                "InfoHash" -> hash = r.nextString().lowercase(Locale.ROOT).ifBlank { null }
+                "PublishDate" -> date = r.nextString()
+                "info" -> {
+                    if (r.peek() != JsonToken.BEGIN_OBJECT) { r.skipValue(); continue }
+                    r.beginObject()
+                    while (r.hasNext()) {
+                        val k = r.nextName()
+                        if (r.peek() == JsonToken.NULL) { r.nextNull(); continue }
+                        when (k) {
+                            "quality" -> quality = runCatching { r.nextInt() }.getOrDefault(0)
+                            "videotype" -> hdr = r.nextString().equals("hdr", true)
+                            "voices" -> { r.beginArray(); while (r.hasNext()) { if (r.peek() == JsonToken.STRING) voices += r.nextString() else r.skipValue() }; r.endArray() }
+                            "seasons" -> { r.beginArray(); while (r.hasNext()) { if (r.peek() == JsonToken.NUMBER) seasons += r.nextInt() else r.skipValue() }; r.endArray() }
+                            else -> r.skipValue()
+                        }
+                    }
+                    r.endObject()
+                }
+                else -> r.skipValue()
+            }
+        }
+        r.endObject()
+        val l = magnet ?: link ?: return null
+        if (title.isBlank()) return null
+        return Release(title, l, size, seeders, peers, tracker, hash ?: Release.hashOf(magnet), date, time(date),
+            quality, hdr, voices, seasons)
     }
+
+    /** Дата раздачи в мс: ISO 8601 (JSON) или RFC 822 (Torznab). 0: не разобрали. */
+    fun time(s: String?): Long {
+        if (s.isNullOrBlank()) return 0L
+        Regex("^(\\d{4})-(\\d\\d)-(\\d\\d)").find(s)?.let { m ->
+            val c = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+            c.clear(); c.set(m.groupValues[1].toInt(), m.groupValues[2].toInt() - 1, m.groupValues[3].toInt())
+            return c.timeInMillis
+        }
+        return runCatching { SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss Z", Locale.US).parse(s)?.time ?: 0L }.getOrDefault(0L)
+    }
+
+    fun human(bytes: Long): String = humanSize(bytes)
 }

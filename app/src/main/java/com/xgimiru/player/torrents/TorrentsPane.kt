@@ -1,64 +1,121 @@
 package com.xgimiru.player.torrents
 
 import android.app.Activity
-import com.xgimiru.player.R
 import android.app.AlertDialog
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.text.InputType
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
-import android.widget.AbsListView
-import android.widget.BaseAdapter
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
-import android.widget.ListView
-import android.widget.TextView
+import android.widget.ScrollView
+import com.xgimiru.player.History
+import com.xgimiru.player.R
+import com.xgimiru.player.TorrApi
+import com.xgimiru.player.TorrEngine
+import com.xgimiru.player.TorrService
+import com.xgimiru.player.TorrSettings
+import com.xgimiru.player.TorrentActivity
+import com.xgimiru.player.net.Meta
+import com.xgimiru.player.net.Tmdb
+import com.xgimiru.player.ui.Card
 import com.xgimiru.player.ui.Host
+import com.xgimiru.player.ui.Img
 import com.xgimiru.player.ui.Pane
+import com.xgimiru.player.ui.Row
 import com.xgimiru.player.ui.Ui
 import com.xgimiru.player.ui.emptyState
+import com.xgimiru.player.ui.onKey
 import com.xgimiru.player.ui.tr
+import java.util.Locale
 import java.util.concurrent.Executors
 
 /**
- * Торренты: строка поиска сверху, под ней результаты (лучшие по сидам), у каждого значки качества,
- * размер и сиды. OK — список файлов и воспроизведение. До поиска — недавние запросы.
- * Поиск идёт через Jackett / Prowlarr пользователя; без него — подсказка, как подключить.
+ * Торренты, как в Лампе: строка поиска, под ней недавние запросы и «Мои торренты» (то, что уже
+ * в движке). Поиск показывает фильмы и сериалы из TMDB постерами; OK на постере: страница фильма
+ * с раздачами ([FilmActivity]). «Все раздачи»: простой список по запросу (без TMDB только он).
+ * Источники поиска добавляет пользователь ([SourcesActivity]); своих в Lumen Play нет.
  */
 class TorrentsPane(private val act: Activity, private val host: Host) : Pane {
     private val io = Executors.newSingleThreadExecutor()
+    private val mineIo = Executors.newSingleThreadExecutor()
+    private val main = Handler(Looper.getMainLooper())
     private val root = FrameLayout(act)
     override val view: View = root
     private val d = { v: Number -> Ui.dp(act, v) }
+
     private val input = EditText(act)
-    private val list = ListView(act)
-    private val status = Ui.text(act, 16f, Ui.INK3, Ui.sans(), 3)
-    private var results: List<Release> = emptyList()
-    private val films = com.xgimiru.player.ui.Row(act, "")
+    private lateinit var allPill: View
+    private val detail = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
+    private val dTitle = Ui.text(act, 26f, Ui.INK, Ui.serif())
+    private val dMeta = Ui.text(act, 15f, Ui.INK2)
+    private val dDesc = Ui.text(act, 14f, Ui.INK2, Ui.sans(), 2).apply { setLineSpacing(0f, 1.3f) }
+    private val status = Ui.text(act, 15f, Ui.INK3, Ui.sans(), 2)
+    private val rowsBox = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
+    private val recentRow = Row(act, tr("Недавние запросы", "Recent searches"))
+    private val filmsRow = Row(act, tr("Фильмы и сериалы", "Movies and series"))
+    private val mineRow = Row(act, tr("Мои торренты", "My torrents"))
+
+    private var builtFor: Boolean? = null          // для какого состояния (есть источники или нет) построен экран
+    private var results: List<Meta>? = null        // null: экран до поиска
     private var lastQuery = ""
-    private var showingRecent = true
     private var seq = 0
+    private var searching = false
+    private val found = LinkedHashMap<String, List<Meta>>()   // недавние ответы TMDB: повторный поиск мгновенный
+    private var backdropUrl: String? = null
+    private var holding = false
+    @Volatile private var mineBase: String? = null
 
     override fun onShow() {
-        host.backdrop(null)
         host.info(null, null, null, null)
-        build()
+        val conf = Sources.configured(act)
+        if (builtFor != conf) build(conf) else if (results == null) showIdle(keepFocus = true)
+        host.backdrop(if (results != null) backdropUrl else null)
+        // «Мои торренты»: движок не трогаем, пока раздел просто пролистывают вкладками
+        main.removeCallbacks(mineTask)
+        main.postDelayed(mineTask, 900)
     }
 
-    private fun build() {
+    override fun onHide() {
+        main.removeCallbacks(mineTask)
+        if (holding) { TorrService.release(act, WHO); holding = false }
+    }
+
+    private fun build(conf: Boolean) {
+        builtFor = conf
         root.removeAllViews()
-        if (!Torznab.configured(act)) {
-            root.addView(emptyState(act, tr("Поиск торрентов", "Torrent search"),
-                tr("Подключите свой Jackett или Prowlarr: Lumen Play будет искать по трекерам, которые вы в нём настроили. Magnet-ссылки и .torrent-файлы открываются и без этого.",
-                    "Connect your Jackett or Prowlarr: Lumen Play will search the trackers you set up there. Magnet links and .torrent files open without it too."),
-                tr("Подключить поиск", "Connect search")) { setup(act) { build() } }, Ui.frame(-1, -1))
+        results = null
+        for (r in listOf(recentRow, filmsRow, mineRow)) (r.parent as? android.view.ViewGroup)?.removeView(r)
+        rowsBox.removeAllViews()
+        (detail.parent as? android.view.ViewGroup)?.removeView(detail)
+        (status.parent as? android.view.ViewGroup)?.removeView(status)
+        (input.parent as? android.view.ViewGroup)?.removeView(input)
+
+        val scroll = ScrollView(act).apply { isVerticalScrollBarEnabled = false; clipChildren = false; clipToPadding = false; isFillViewport = true }
+        if (!conf) {
+            // без источников: подсказка и кнопка; «Мои торренты» всё равно ниже
+            val box = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
+            box.addView(emptyState(act, tr("Поиск торрентов", "Torrent search"),
+                tr("Добавьте источник поиска: свой Jackett, Prowlarr или совместимый сервис. Magnet-ссылки и .torrent-файлы открываются и без него.",
+                    "Add a search source: your own Jackett, Prowlarr or a compatible service. Magnet links and .torrent files open without one too."),
+                tr("Добавить источник", "Add a source")) { openSources() }, Ui.linear(-1, -2).apply { topMargin = d(36) })
+            box.addView(mineRow, Ui.linear(-1, -2).apply { topMargin = d(28) })
+            mineRow.visibility = if (mineRow.size > 0) View.VISIBLE else View.GONE
+            scroll.addView(box)
+            root.addView(scroll, Ui.frame(-1, -1))
             return
         }
-        val col = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL; setPadding(d(56), d(8), d(56), d(20)) }
+
+        val col = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL; setPadding(0, d(6), 0, 0); clipChildren = false; clipToPadding = false }
+        val top = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         input.apply {
             hint = tr("Название фильма или сериала", "Movie or series title")
             setHintTextColor(Ui.INK3)
@@ -68,53 +125,70 @@ class TorrentsPane(private val act: Activity, private val host: Host) : Pane {
             setSingleLine()
             imeOptions = EditorInfo.IME_ACTION_SEARCH
             inputType = InputType.TYPE_CLASS_TEXT
-            setPadding(d(22), d(14), d(22), d(14))
+            setPadding(d(22), d(13), d(22), d(13))
             background = Ui.rounded(0x1FF4EFE6, d(30).toFloat())
             setOnFocusChangeListener { _, f -> background = Ui.rounded(if (f) 0x33F4EFE6 else 0x1FF4EFE6, d(30).toFloat(), if (f) d(2) else 0, Ui.INK) }
-            setOnEditorActionListener { _, a, _ -> if (a == EditorInfo.IME_ACTION_SEARCH) { search(text.toString()); true } else false }
-            setOnKeyListener { _, code, ev ->
-                if (ev.action == KeyEvent.ACTION_DOWN && code == KeyEvent.KEYCODE_DPAD_DOWN) {
-                    when {
-                        films.visibility == View.VISIBLE && films.size > 0 -> { films.first()?.requestFocus(); true }
-                        list.count > 0 -> { list.requestFocus(); list.setSelection(0); true }
-                        else -> false
-                    }
-                } else false
+            setOnEditorActionListener { _, a, ev ->
+                if (a == EditorInfo.IME_ACTION_SEARCH || a == EditorInfo.IME_ACTION_DONE || ev?.keyCode == KeyEvent.KEYCODE_ENTER) { search(text.toString()); true } else false
             }
         }
-        col.addView(input, Ui.linear(d(640), -2))
-        col.addView(status, Ui.linear(-1, -2).apply { topMargin = d(16); leftMargin = d(8) })
-        films.strip.setPadding(0, d(8), d(56), d(8))
-        (films.heading.layoutParams as LinearLayout.LayoutParams).leftMargin = d(8)
-        films.visibility = View.GONE
-        (films.parent as? android.view.ViewGroup)?.removeView(films)
-        col.addView(films, Ui.linear(-1, -2).apply { topMargin = d(4) })
-        list.apply {
-            divider = null
-            selector = Ui.rounded(0x2EF4EFE6, d(12).toFloat())
-            isVerticalScrollBarEnabled = false
-            adapter = Adapter()
-            setOnItemClickListener { _, _, p, _ ->
-                if (showingRecent) { val q = recent(act)[p]; input.setText(q); search(q) } else Torznab.open(act, results[p])
-            }
-            setOnKeyListener { _, code, ev ->
-                if (ev.action == KeyEvent.ACTION_DOWN && code == KeyEvent.KEYCODE_DPAD_UP && selectedItemPosition <= 0) {
-                    if (films.visibility == View.VISIBLE && films.size > 0) films.first()?.requestFocus() else input.requestFocus(); true
-                } else false
-            }
-        }
-        col.addView(list, Ui.linear(-1, 0, 1f).apply { topMargin = d(10) })
+        top.addView(input, Ui.linear(d(460), -2).apply { rightMargin = d(14) })
+        allPill = Ui.pill(act, tr("Все раздачи", "All releases")) { if (lastQuery.isNotEmpty()) FilmActivity.openQuery(act, lastQuery) }
+        top.addView(allPill, Ui.linear(-2, -2).apply { rightMargin = d(10) })
+        top.addView(Ui.pill(act, tr("Источники", "Sources")) { openSources() }, Ui.linear(-2, -2))
+        col.addView(top, Ui.linear(-1, -2).apply { leftMargin = d(56); rightMargin = d(56) })
+
+        detail.removeAllViews()
+        detail.addView(dTitle)
+        detail.addView(dMeta, Ui.linear(-1, -2).apply { topMargin = d(6) })
+        detail.addView(dDesc, Ui.linear(d(620), -2).apply { topMargin = d(6) })
+        col.addView(detail, Ui.linear(-1, -2).apply { leftMargin = d(60); topMargin = d(16) })
+        col.addView(status, Ui.linear(-1, -2).apply { leftMargin = d(60); topMargin = d(12) })
+
+        rowsBox.addView(recentRow, Ui.linear(-1, -2))
+        rowsBox.addView(filmsRow, Ui.linear(-1, -2))
+        rowsBox.addView(mineRow, Ui.linear(-1, -2).apply { topMargin = d(6) })
+        scroll.addView(rowsBox)
+        col.addView(scroll, Ui.linear(-1, 0, 1f).apply { topMargin = d(12) })
         root.addView(col, Ui.frame(-1, -1))
-        showRecent()
+        showIdle(keepFocus = false)
     }
 
-    private fun showRecent() {
-        showingRecent = true
-        films.visibility = View.GONE
-        val r = recent(act)
-        status.text = if (r.isEmpty()) tr("Нажмите OK на строке поиска и введите название.", "Press OK on the search line and type a title.")
-        else tr("Недавние запросы", "Recent searches")
-        (list.adapter as BaseAdapter).notifyDataSetChanged()
+    /** До поиска: недавние запросы и «Мои торренты». */
+    private fun showIdle(keepFocus: Boolean) {
+        results = null
+        backdropUrl = null
+        if (builtFor != true) return
+        allPill.visibility = View.GONE
+        detail.visibility = View.GONE
+        filmsRow.visibility = View.GONE
+        val hadFocus = keepFocus && recentRow.hasFocus()
+        parkFocus()
+        recentRow.clear()
+        val rec = recent(act)
+        for (q in rec) {
+            val p = Ui.pill(act, q) { input.setText(q); input.setSelection(q.length); search(q) }
+            p.onKey(KeyEvent.KEYCODE_MENU) { forget(act, q); showIdle(keepFocus = true); true }
+            recentRow.add(p.apply { layoutParams = LinearLayout.LayoutParams(-2, -2).apply { rightMargin = d(12) } })
+        }
+        recentRow.visibility = if (rec.isEmpty()) View.GONE else View.VISIBLE
+        if (hadFocus) recentRow.first()?.requestFocus() ?: input.requestFocus()
+        mineRow.visibility = if (mineRow.size > 0) View.VISIBLE else View.GONE
+        setStatus(if (rec.isEmpty()) tr("Нажмите OK на строке поиска и введите название.", "Press OK on the search line and type a title.") else null)
+    }
+
+    /**
+     * Фокус нельзя терять: если спрятать вью с фокусом, Android отдаёт его первой вкладке, и та
+     * переключает раздел. Поэтому перед перестройкой рядов фокус переносим на строку поиска.
+     */
+    private fun parkFocus() {
+        if (builtFor == true && rowsBox.hasFocus()) input.requestFocus()
+        else if (builtFor == false && mineRow.hasFocus()) findFocusable(root)?.requestFocus()   // кнопка «Добавить источник»
+    }
+
+    private fun setStatus(t: String?) {
+        status.text = t ?: ""
+        status.visibility = if (t.isNullOrEmpty()) View.GONE else View.VISIBLE
     }
 
     private fun search(q: String) {
@@ -124,160 +198,171 @@ class TorrentsPane(private val act: Activity, private val host: Host) : Pane {
         remember(act, query)
         lastQuery = query
         val my = ++seq
-        status.text = tr("Ищу «$query»…", "Searching for “$query”…")
+        // без TMDB: сразу простой список раздач
+        if (!Tmdb.enabled) { showIdle(keepFocus = false); FilmActivity.openQuery(act, query); return }
+        found[query.lowercase()]?.let { showResults(it); return }
+        setStatus(tr("Ищу «$query»…", "Searching for “$query”…"))
+        searching = true
         io.execute {
-            val metas = runCatching { com.xgimiru.player.net.Tmdb.search(query) }.getOrDefault(emptyList())
-            act.runOnUiThread { if (my == seq) showFilms(metas) }
-            val r = runCatching { Torznab.search(act, query) }
-            act.runOnUiThread {
-                if (my != seq) return@runOnUiThread
-                r.onSuccess {
-                    results = it
-                    showingRecent = false
-                    status.text = if (it.isEmpty()) tr("Ничего не нашлось. Попробуйте название на другом языке.", "Nothing found. Try the title in another language.")
-                    else tr("Найдено: ${it.size}. Лучшие раздачи сверху.", "Found ${it.size}. The best seeded first.")
-                    (list.adapter as BaseAdapter).notifyDataSetChanged()
-                    if (it.isNotEmpty()) { list.requestFocus(); list.setSelection(0) }
-                }.onFailure { status.text = it.message }
+            val metas = runCatching { Tmdb.search(query) }
+            main.post {
+                if (my != seq) return@post
+                searching = false
+                val list = metas.getOrDefault(emptyList())
+                if (list.isNotEmpty()) {
+                    found[query.lowercase()] = list
+                    if (found.size > 12) found.remove(found.keys.first())
+                }
+                if (list.isEmpty()) {
+                    showIdle(keepFocus = false)
+                    setStatus(tr("Фильмов с таким названием не нашлось, показываю все раздачи по запросу.",
+                        "No movies with this title, showing all releases for the query."))
+                    FilmActivity.openQuery(act, query)
+                } else showResults(list)
             }
         }
     }
 
-    /** Фильмы и сериалы по запросу (TMDB): постеры над раздачами. OK — раздачи именно этого фильма. */
-    private fun showFilms(metas: List<com.xgimiru.player.net.Meta>) {
-        films.clear()
-        films.heading.text = tr("Фильмы и сериалы", "Movies and series")
+    /** Найденные фильмы и сериалы: ряд постеров, над ним описание того, на чём фокус. */
+    private fun showResults(metas: List<Meta>) {
+        results = metas
+        parkFocus()
+        allPill.visibility = View.VISIBLE
+        recentRow.visibility = View.GONE
+        mineRow.visibility = View.GONE
+        detail.visibility = View.VISIBLE
+        setStatus(null)
+        filmsRow.clear()
+        filmsRow.heading.text = tr("Фильмы и сериалы по запросу «$lastQuery»", "Movies and series for “$lastQuery”")
         for (m in metas) {
-            val c = com.xgimiru.player.ui.Card(act, 104, 156)
-            c.label.visibility = View.GONE; c.sub.visibility = View.GONE
-            com.xgimiru.player.ui.Img.load(c.image, m.poster("w342"), 360)
-            c.onFocus = { f -> if (f) host.backdrop(m.backdrop()) }
-            c.setOnClickListener { searchFilm(m) }
-            films.add(c)
+            val c = Card(act, 120, 180)
+            c.label.text = m.title
+            c.label.textSize = 14f
+            c.sub.text = listOfNotNull(m.year, if (m.tv) tr("сериал", "series") else null).joinToString(" · ")
+            Img.load(c.image, m.poster("w342"), 360)
+            c.onFocus = { f -> if (f) focusFilm(m) }
+            c.setOnClickListener { FilmActivity.open(act, m) }
+            filmsRow.add(c)
         }
-        films.visibility = if (metas.isEmpty()) View.GONE else View.VISIBLE
+        filmsRow.visibility = View.VISIBLE
+        focusFilm(metas[0])
+        filmsRow.first()?.requestFocus()
     }
 
-    /** Раздачи выбранного фильма: поиск по названию и по оригинальному названию с годом, без повторов. */
-    private fun searchFilm(m: com.xgimiru.player.net.Meta) {
-        val my = ++seq
-        status.text = tr("Ищу раздачи «${m.title}»…", "Looking for releases of “${m.title}”…")
-        io.execute {
-            val qs = listOfNotNull(m.title + (m.year?.let { " $it" } ?: ""), m.original?.takeIf { it != m.title }?.let { it + (m.year?.let { y -> " $y" } ?: "") })
-            val all = qs.flatMap { q -> runCatching { Torznab.search(act, q) }.getOrDefault(emptyList()) }
-            val seen = HashSet<String>()
-            val found = all.filter { seen.add(it.hash?.lowercase() ?: it.title.lowercase()) }.sortedByDescending { it.seeders }
-            act.runOnUiThread {
-                if (my != seq) return@runOnUiThread
-                results = found
-                showingRecent = false
-                status.text = if (found.isEmpty()) tr("У «${m.title}» раздач не нашлось.", "No releases found for “${m.title}”.")
-                else tr("«${m.title}»: ${found.size} раздач, лучшие сверху.", "“${m.title}”: ${found.size} releases, the best seeded first.")
-                (list.adapter as BaseAdapter).notifyDataSetChanged()
-                if (found.isNotEmpty()) { list.requestFocus(); list.setSelection(0) }
+    private fun focusFilm(m: Meta) {
+        backdropUrl = m.backdrop("w1280")
+        host.backdrop(backdropUrl)
+        dTitle.text = m.title
+        dMeta.text = listOfNotNull(m.original?.takeIf { !it.equals(m.title, true) }, m.year,
+            if (m.tv) tr("Сериал", "Series") else tr("Фильм", "Movie"),
+            m.rating.takeIf { it > 0 }?.let { "★ " + String.format(Locale.US, "%.1f", it) }).joinToString("  ·  ")
+        dDesc.text = m.overview ?: ""
+        dDesc.visibility = if (m.overview.isNullOrEmpty()) View.GONE else View.VISIBLE
+    }
+
+    // ── Мои торренты ──
+    private val mineTask = Runnable {
+        val builtin = TorrSettings.builtin(act)
+        // встроенный движок при запуске оставляет только торренты из истории: если её нет, база пуста
+        if (builtin && !TorrEngine.isRunning && History.all(act).none { it.key.startsWith("ts:") }) { showMine(emptyList()); return@Runnable }
+        if (builtin && !holding) { TorrService.hold(act, WHO); holding = true }
+        mineIo.execute {
+            val items = runCatching {
+                val base = if (builtin) TorrEngine.start(act) else TorrSettings.external(act)?.takeIf { TorrApi.alive(it) }
+                mineBase = base
+                if (base == null) emptyList() else TorrApi.list(base)
+            }.getOrDefault(emptyList())
+            main.post { if (root.isAttachedToWindow) showMine(items) }
+        }
+    }
+
+    private fun showMine(items: List<TorrApi.Item>) {
+        val focusAt = (0 until mineRow.size).firstOrNull { mineRow.strip.getChildAt(it).isFocused }
+        if (focusAt != null) parkFocus()
+        mineRow.clear()
+        mineRow.heading.text = tr("Мои торренты", "My torrents") + if (items.isNotEmpty()) tr("   ·   Меню: убрать", "   ·   Menu: remove") else ""
+        for (t in items) {
+            val c = Card(act, 120, 180)
+            c.label.text = t.title
+            c.label.textSize = 14f
+            c.label.maxLines = if (t.poster == null) 4 else 2
+            c.sub.text = humanSize(t.size)
+            Img.load(c.image, t.poster, 360)
+            c.onFocus = { f -> if (f && results == null) host.backdrop(null) }
+            c.setOnClickListener {
+                val i = Intent(Intent.ACTION_VIEW, Uri.parse("magnet:?xt=urn:btih:${t.hash}")).setClass(act, TorrentActivity::class.java)
+                    .putExtra(TorrentActivity.EXTRA_TITLE, t.title)
+                t.poster?.let { i.putExtra(TorrentActivity.EXTRA_POSTER, it) }
+                act.startActivity(i)
             }
+            c.onKey(KeyEvent.KEYCODE_MENU) { askRemove(t); true }
+            mineRow.add(c)
         }
+        mineRow.visibility = if (items.isNotEmpty() && results == null) View.VISIBLE else View.GONE
+        if (focusAt != null) (mineRow.strip.getChildAt(focusAt.coerceAtMost(mineRow.size - 1)) ?: recentRow.first() ?: input).requestFocus()
     }
 
-    private inner class Adapter : BaseAdapter() {
-        override fun getCount() = if (showingRecent) recent(act).size else results.size
-        override fun getItem(p: Int): Any = if (showingRecent) recent(act)[p] else results[p]
-        override fun getItemId(p: Int) = p.toLong()
-        override fun getView(p: Int, c: View?, parent: android.view.ViewGroup?): View {
-            val row = (c as? ReleaseRow) ?: ReleaseRow(act).apply { layoutParams = AbsListView.LayoutParams(-1, -2) }
-            if (showingRecent) row.bindRecent(recent(act)[p]) else row.bind(results[p])
-            return row
-        }
+    private fun askRemove(t: TorrApi.Item) {
+        AlertDialog.Builder(act, R.style.Lumen_Dialog)
+            .setTitle(tr("Убрать торрент?", "Remove the torrent?"))
+            .setMessage(tr("«${t.title}» уйдёт из движка вместе с кэшем. История просмотра останется.",
+                "“${t.title}” leaves the engine with its cache. The watch history stays."))
+            .setPositiveButton(tr("Убрать", "Remove")) { _, _ ->
+                mineIo.execute {
+                    val base = mineBase ?: return@execute
+                    runCatching { TorrApi.remove(base, t.hash) }
+                    val items = runCatching { TorrApi.list(base) }.getOrDefault(emptyList())
+                    main.post { if (root.isAttachedToWindow) showMine(items) }
+                }
+            }
+            .setNegativeButton(tr("Отмена", "Cancel"), null)
+            .show()
     }
+
+    private fun openSources() = act.startActivity(Intent(act, SourcesActivity::class.java))
 
     override fun focusFirst(): Boolean {
-        if (!Torznab.configured(act)) return root.getChildAt(0)?.let { v -> findFocusable(v)?.requestFocus() } == true
-        input.requestFocus(); return true
+        if (builtFor != true) return findFocusable(root)?.requestFocus() == true
+        if (results != null) filmsRow.first()?.let { return it.requestFocus() }
+        return input.requestFocus()
     }
 
     private fun findFocusable(v: View): View? {
-        if (v.isFocusable) return v
+        if (v.isFocusable && v.visibility == View.VISIBLE) return v
         if (v is android.view.ViewGroup) for (i in 0 until v.childCount) findFocusable(v.getChildAt(i))?.let { return it }
         return null
     }
 
     override fun onBack(): Boolean {
-        if (!showingRecent) { showRecent(); input.requestFocus(); return true }
+        if (searching) {   // «Назад» во время поиска: отменить его
+            seq++; searching = false
+            setStatus(null)
+            return true
+        }
+        if (results != null) {
+            seq++
+            input.requestFocus()
+            showIdle(keepFocus = false)
+            host.backdrop(null)
+            return true
+        }
         return false
     }
 
     companion object {
+        private const val WHO = "torrents-pane"
+
         private fun recent(ctx: Context): List<String> =
             ctx.getSharedPreferences("torznab", Context.MODE_PRIVATE).getString("recent", "")!!.split('\n').filter { it.isNotEmpty() }
 
         private fun remember(ctx: Context, q: String) {
-            val l = (listOf(q) + recent(ctx).filter { !it.equals(q, true) }).take(8)
+            val l = (listOf(q) + recent(ctx).filter { !it.equals(q, true) }).take(10)
             ctx.getSharedPreferences("torznab", Context.MODE_PRIVATE).edit().putString("recent", l.joinToString("\n")).apply()
         }
 
-        /** Подключить Jackett / Prowlarr: адрес Torznab и ключ API. */
-        fun setup(act: Activity, done: () -> Unit) {
-            val d = { v: Number -> Ui.dp(act, v) }
-            val url = EditText(act).apply {
-                hint = "http://192.168.1.10:9117/api/v2.0/indexers/all/results/torznab"
-                setText(Torznab.url(act) ?: ""); setSingleLine(); inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
-            }
-            val key = EditText(act).apply { hint = tr("Ключ API", "API key"); setText(Torznab.key(act) ?: ""); setSingleLine() }
-            val box = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL; setPadding(d(24), d(8), d(24), 0); addView(url); addView(key) }
-            AlertDialog.Builder(act, R.style.Lumen_Dialog)
-                .setTitle(tr("Поиск через Jackett или Prowlarr", "Search with Jackett or Prowlarr"))
-                .setMessage(tr("Адрес Torznab из Jackett («Copy Torznab Feed», индексатор all) или Prowlarr, и ключ API оттуда же.",
-                    "The Torznab address from Jackett (“Copy Torznab Feed”, the all indexer) or Prowlarr, and the API key from there."))
-                .setView(box)
-                .setPositiveButton(tr("Сохранить", "Save")) { _, _ -> Torznab.save(act, url.text.toString(), key.text.toString()); done() }
-                .setNeutralButton(tr("Отключить", "Disconnect")) { _, _ -> Torznab.save(act, null, null); done() }
-                .setNegativeButton(tr("Отмена", "Cancel"), null)
-                .show()
+        private fun forget(ctx: Context, q: String) {
+            val l = recent(ctx).filter { !it.equals(q, true) }
+            ctx.getSharedPreferences("torznab", Context.MODE_PRIVATE).edit().putString("recent", l.joinToString("\n")).apply()
         }
-    }
-}
-
-/** Строка раздачи: название, значки качества, размер, сиды, трекер. */
-class ReleaseRow(ctx: Context) : LinearLayout(ctx) {
-    private val d = { v: Number -> Ui.dp(ctx, v) }
-    private val title = Ui.text(ctx, 18f, Ui.INK, Ui.medium(), 2)
-    private val badges = LinearLayout(ctx).apply { orientation = HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-    private val meta = Ui.text(ctx, 14f, Ui.INK3)
-    private val seeds = Ui.text(ctx, 18f, Ui.ACCENT, Ui.bold()).apply { gravity = Gravity.END }
-
-    init {
-        orientation = HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        setPadding(d(20), d(12), d(22), d(12))
-        val col = LinearLayout(ctx).apply { orientation = VERTICAL }
-        col.addView(title)
-        val line = LinearLayout(ctx).apply { orientation = HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        line.addView(badges)
-        line.addView(meta)
-        col.addView(line, Ui.linear(-1, -2).apply { topMargin = d(6) })
-        addView(col, Ui.linear(0, -2, 1f))
-        addView(seeds, Ui.linear(d(90), -2))
-    }
-
-    fun bind(r: Release) {
-        title.text = r.title
-        title.maxLines = 2
-        badges.removeAllViews()
-        for (b in r.badges) badges.addView(Ui.text(context, 12f, Ui.GROUND, Ui.bold()).apply {
-            text = b
-            setPadding(d(8), d(2), d(8), d(2))
-            background = Ui.rounded(if (b == "4K" || b == "DV" || b.startsWith("HDR")) Ui.ACCENT else Ui.INK2, d(6).toFloat())
-        }, Ui.linear(-2, -2).apply { rightMargin = d(8) })
-        meta.text = listOfNotNull(Torznab.human(r.size).ifEmpty { null }, r.tracker).joinToString("  ·  ")
-        seeds.text = "▲ ${r.seeders}"
-        seeds.visibility = VISIBLE
-    }
-
-    fun bindRecent(q: String) {
-        title.text = q
-        title.maxLines = 1
-        badges.removeAllViews()
-        meta.text = ""
-        seeds.visibility = GONE
     }
 }

@@ -89,6 +89,11 @@ class SettingsActivity : Activity() {
             if (ext == null) askAddress() else TorrSettings.setBuiltin(this, false)
         }
         row("Адрес внешнего TorrServe…", null, null) { askAddress() }
+        // источники поиска (Jackett, Prowlarr, совместимые сервисы): свой экран
+        row(com.xgimiru.player.ui.tr("Источники поиска торрентов…", "Torrent search sources…"),
+            com.xgimiru.player.ui.tr("Jackett, Prowlarr или совместимый сервис", "Jackett, Prowlarr or a compatible service"), null) {
+            startActivity(android.content.Intent(this, com.xgimiru.player.torrents.SourcesActivity::class.java))
+        }
 
         if (available) {
             header("Память под кэш встроенного движка")

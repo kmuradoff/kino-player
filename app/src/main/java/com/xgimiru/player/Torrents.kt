@@ -296,8 +296,31 @@ object TorrApi {
     fun alive(base: String) = runCatching { get(base, "/echo", 2000).isNotBlank() }.getOrDefault(false)
 
     /** Добавить magnet, хеш или ссылку на .torrent (её TorrServer скачает сам). Возвращает статус. */
-    fun add(base: String, link: String): JSONObject = JSONObject(post(base, "/torrents",
-        JSONObject().put("action", "add").put("link", link).put("save_to_db", true), 30_000))
+    fun add(base: String, link: String, title: String? = null, poster: String? = null): JSONObject {
+        val body = JSONObject().put("action", "add").put("link", link).put("save_to_db", true)
+        // название и постер видны в «Моих торрентах» Lumen Play и в списке Лампы
+        if (!title.isNullOrBlank()) body.put("title", title)
+        if (!poster.isNullOrBlank()) body.put("poster", poster)
+        return JSONObject(post(base, "/torrents", body, 30_000))
+    }
+
+    /** Торрент из базы движка: для «Моих торрентов». */
+    class Item(val hash: String, val title: String, val poster: String?, val size: Long, val added: Long)
+
+    /** Торренты в базе движка, новые сверху. */
+    fun list(base: String): List<Item> {
+        val arr = JSONArray(post(base, "/torrents", JSONObject().put("action", "list")))
+        return (0 until arr.length()).map { arr.getJSONObject(it) }.mapNotNull { o ->
+            val hash = o.optString("hash").lowercase().ifEmpty { return@mapNotNull null }
+            Item(hash, o.optString("title").ifBlank { o.optString("name") }.ifBlank { hash.take(12) },
+                o.optString("poster").takeIf { it.startsWith("http") }, o.optLong("torrent_size"), o.optLong("timestamp"))
+        }.sortedByDescending { it.added }
+    }
+
+    /** Убрать торрент из движка (и его кэш). */
+    fun remove(base: String, hash: String) {
+        post(base, "/torrents", JSONObject().put("action", "rem").put("hash", hash))
+    }
 
     /** Загрузить содержимое .torrent-файла. Возвращает статус. */
     fun upload(base: String, torrent: ByteArray, name: String): JSONObject {
