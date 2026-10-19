@@ -46,6 +46,7 @@ object History {
         for (x in list.take(LIMIT)) arr.put(JSONObject()
             .put("k", x.key).put("u", x.uri).put("t", x.title).put("p", x.position).put("d", x.duration).put("w", x.updated))
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, arr.toString()).apply()
+        WatchNext.publish(ctx, e)
     }
 
     fun remove(ctx: Context, key: String) {
@@ -53,6 +54,7 @@ object History {
         for (x in all(ctx).filter { it.key != key }) arr.put(JSONObject()
             .put("k", x.key).put("u", x.uri).put("t", x.title).put("p", x.position).put("d", x.duration).put("w", x.updated))
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, arr.toString()).apply()
+        WatchNext.remove(ctx, key)
     }
 }
 

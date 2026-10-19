@@ -125,6 +125,7 @@ class MainActivity : Activity() {
     private fun fill() {
         list.removeAllViews()
         val items = History.all(this).filter { !it.finished }
+        for (e in items) WatchNext.publish(this, e)   // и в «Продолжить просмотр» лаунчера (записи до 0.12)
         if (items.isEmpty()) {
             list.addView(TextView(this).apply {
                 text = "Здесь появятся фильмы и серии, которые вы начали смотреть.\n\n" +

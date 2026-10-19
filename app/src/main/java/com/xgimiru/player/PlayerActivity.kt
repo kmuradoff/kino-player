@@ -741,7 +741,11 @@ class PlayerActivity : Activity(), Engine.Listener {
         // дошли до титров: серия просмотрена, в «Продолжить просмотр» её не оставляем
         val inCredits = Chapters.creditsStart(chapters, dur)?.let { pos >= it } == true
         if (entry.finished || completed || inCredits) History.remove(this, entry.key)
-        else if (pos > 15_000) History.save(this, entry)
+        else if (pos > 15_000) {
+            History.save(this, entry)
+            // кадр из видео — обложка в «Продолжить просмотр» лаунчера
+            if (pos > 60_000) WatchNext.grab(this, video, entry) { WatchNext.publish(this, entry) }
+        }
     }
 
     private fun finishWithResult() {

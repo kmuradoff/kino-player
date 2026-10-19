@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- «Продолжить просмотр» лаунчера: свои строки WatchNextPrograms -->
+    <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />
 
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
@@ -110,5 +112,7 @@
 
         <!-- ответ системного установщика на обновление «Кино» (Updater) -->
         <receiver android:name=".Updater$Done" android:exported="false" />
+        <!-- обложки «Продолжить просмотр» (только чтение, только files/art) -->
+        <provider android:name=".Art" android:authorities="com.xgimiru.player.art" android:exported="true" />
     </application>
 </manifest>
