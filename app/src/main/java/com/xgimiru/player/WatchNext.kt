@@ -54,6 +54,26 @@ object WatchNext {
             .setData(Uri.parse(e.uri))
             .putExtra("title", e.title)
         val n = Name.parse(e.title)
+        // TMDB: название на языке системы, описание, и один фильм из разных раздач — одна строка
+        val meta = com.xgimiru.player.net.Tmdb.find(ctx, n.title, n.year, if (n.episode != null) true else null)
+        if (meta != null) {
+            val tag = (if (meta.tv) "tv" else "m") + meta.id + (n.season?.let { "s$it" } ?: "") + (n.episode?.let { "e$it" } ?: "")
+            val p = ids(ctx)
+            for ((k, other) in p.all) {
+                if (!k.startsWith("tmdb:") || other != tag) continue
+                val otherKey = k.removePrefix("tmdb:")
+                if (otherKey == e.key) continue
+                val older = History.get(ctx, otherKey)?.updated ?: 0L
+                if (older > e.updated) {               // есть запись новее про тот же фильм: эту убрать
+                    p.getLong(e.key, -1L).takeIf { it >= 0 }?.let { ctx.contentResolver.delete(TvContract.buildWatchNextProgramUri(it), null, null) }
+                    p.edit().remove(e.key).putString("tmdb:" + e.key, tag).apply()
+                    return
+                }
+                p.getLong(otherKey, -1L).takeIf { it >= 0 }?.let { ctx.contentResolver.delete(TvContract.buildWatchNextProgramUri(it), null, null) }
+                p.edit().remove(otherKey).remove(k).apply()
+            }
+            p.edit().putString("tmdb:" + e.key, tag).apply()
+        }
         val v = ContentValues().apply {
             put(TvContract.WatchNextPrograms.COLUMN_TYPE,
                 if (n.episode != null) TvContract.WatchNextPrograms.TYPE_TV_EPISODE else TvContract.WatchNextPrograms.TYPE_MOVIE)
@@ -61,7 +81,8 @@ object WatchNext {
             n.episode?.let { put(TvContract.WatchNextPrograms.COLUMN_EPISODE_DISPLAY_NUMBER, it) }
             n.year?.let { put(TvContract.WatchNextPrograms.COLUMN_RELEASE_DATE, it) }
             put(TvContract.WatchNextPrograms.COLUMN_WATCH_NEXT_TYPE, TvContract.WatchNextPrograms.WATCH_NEXT_TYPE_CONTINUE)
-            put(TvContract.WatchNextPrograms.COLUMN_TITLE, n.title)
+            put(TvContract.WatchNextPrograms.COLUMN_TITLE, meta?.title?.ifBlank { null } ?: n.title)
+            meta?.overview?.let { put(TvContract.WatchNextPrograms.COLUMN_SHORT_DESCRIPTION, it.take(300)) }
             put(TvContract.WatchNextPrograms.COLUMN_LAST_PLAYBACK_POSITION_MILLIS, e.position.toInt())
             put(TvContract.WatchNextPrograms.COLUMN_DURATION_MILLIS, e.duration.toInt())
             put(TvContract.WatchNextPrograms.COLUMN_LAST_ENGAGEMENT_TIME_UTC_MILLIS, e.updated)

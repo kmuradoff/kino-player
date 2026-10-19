@@ -18,20 +18,24 @@ import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 
 /**
- * Адрес хоста, даже если DNS провайдера его прячет (в России api.themoviedb.org отвечает 127.0.0.1).
- * Сначала обычный DNS; если ответ «закольцован» (127.x, 0.0.0.0, частные сети) или пуст — DNS-over-HTTPS
- * Cloudflare, затем Google. Ответ кэшируется на 6 часов. Никаких прокси: соединение прямо с сервером,
- * с правильным SNI и проверкой сертификата на настоящее имя.
+ * Доступ к хостам, которые DNS прячет. В России сам DNS TMDB (Route53) отвечает 127.0.0.1 любому
+ * резолверу из России, в том числе Cloudflare и Google, а сами серверы доступны. Поэтому: обычный DNS;
+ * если ответ «закольцован» (127.x, 0.0.0.0, частные сети) — Google DNS-over-HTTPS с подсетью клиента
+ * из Европы (edns_client_subnet), затем Cloudflare. Соединение — прямо с сервером: свой TLS-сокет с
+ * настоящим именем (SNI) и проверкой сертификата на это имя, простой HTTP/1.1 GET. Никаких прокси.
  */
 object Resolve {
     private class Entry(val ip: String?, val at: Long)
     private val cache = ConcurrentHashMap<String, Entry>()
+    private const val EU_SUBNET = "193.0.0.0/24"
+    private const val MAX = 16 shl 20
 
     private fun bogus(a: InetAddress) = a.isLoopbackAddress || a.isAnyLocalAddress || a.isSiteLocalAddress || a.isLinkLocalAddress
+    private fun bogus(ip: String) = runCatching { bogus(InetAddress.getByName(ip)) }.getOrDefault(true)
 
     /** null — обычный DNS отвечает честно, подменять адрес не нужно. */
     fun override(host: String): String? {
-        cache[host]?.takeIf { System.currentTimeMillis() - it.at < 6 * 3600_000L }?.let { return it.ip }
+        cache[host]?.takeIf { System.currentTimeMillis() - it.at < 3 * 3600_000L }?.let { return it.ip }
         val sys = runCatching { InetAddress.getAllByName(host).toList() }.getOrDefault(emptyList())
         val ip = if (sys.isNotEmpty() && sys.none { bogus(it) }) null else doh(host)
         cache[host] = Entry(ip, System.currentTimeMillis())
@@ -39,45 +43,92 @@ object Resolve {
     }
 
     private fun doh(host: String): String? {
-        for (u in listOf("https://cloudflare-dns.com/dns-query?name=$host&type=A", "https://dns.google/resolve?name=$host&type=A")) {
+        for (u in listOf("https://dns.google/resolve?name=$host&type=A&edns_client_subnet=$EU_SUBNET",
+                "https://8.8.8.8/resolve?name=$host&type=A&edns_client_subnet=$EU_SUBNET",
+                "https://cloudflare-dns.com/dns-query?name=$host&type=A")) {
             val ip = runCatching {
                 val c = URL(u).openConnection() as HttpURLConnection
                 c.connectTimeout = 5000; c.readTimeout = 5000
                 c.setRequestProperty("accept", "application/dns-json")
                 val o = JSONObject(c.inputStream.bufferedReader().use { it.readText() })
                 val a = o.optJSONArray("Answer") ?: return@runCatching null
-                (0 until a.length()).map { a.getJSONObject(it) }.firstOrNull { it.optInt("type") == 1 }?.optString("data")
-            }.getOrNull()
+                (0 until a.length()).map { a.getJSONObject(it) }.filter { it.optInt("type") == 1 }
+                    .map { it.optString("data") }.firstOrNull { it.isNotEmpty() && !bogus(it) }
+            }.onFailure { android.util.Log.w("LumenTmdb", "DoH: $it") }.getOrNull()
             if (!ip.isNullOrEmpty()) return ip
         }
         return null
     }
 
-    /** GET по https с подменой адреса при необходимости. */
+    /** GET по https; если DNS прячет хост — напрямую на найденный адрес. */
     fun open(url: String, timeout: Int = 12_000): InputStream {
         val u = URL(url)
         val ip = override(u.host)
-        val c = (if (ip == null) u else URL(u.protocol, ip, u.port, u.file)).openConnection() as HttpsURLConnection
-        c.connectTimeout = timeout; c.readTimeout = timeout
-        if (ip != null) {
-            val host = u.host
-            c.setRequestProperty("Host", host)
-            c.sslSocketFactory = SniFactory(HttpsURLConnection.getDefaultSSLSocketFactory(), host)
-            c.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, s -> HttpsURLConnection.getDefaultHostnameVerifier().verify(host, s) }
+        if (ip == null) {
+            val c = u.openConnection() as HttpURLConnection
+            c.connectTimeout = timeout; c.readTimeout = timeout
+            if (c.responseCode !in 200..299) throw java.io.IOException("HTTP ${c.responseCode}")
+            return c.inputStream
         }
-        if (c.responseCode !in 200..299) throw java.io.IOException("HTTP ${c.responseCode}")
-        return c.inputStream
+        return java.io.ByteArrayInputStream(direct(u, ip, timeout))
     }
 
-    private class SniFactory(private val base: SSLSocketFactory, private val host: String) : SSLSocketFactory() {
-        override fun getDefaultCipherSuites(): Array<String> = base.defaultCipherSuites
-        override fun getSupportedCipherSuites(): Array<String> = base.supportedCipherSuites
-        private fun sni(s: Socket): Socket = s.also { (it as? SSLSocket)?.let { ss -> ss.sslParameters = ss.sslParameters.apply { serverNames = listOf(SNIHostName(host)) } } }
-        override fun createSocket(s: Socket, h: String, p: Int, a: Boolean) = sni(base.createSocket(s, host, p, a))
-        override fun createSocket(h: String, p: Int) = sni(base.createSocket(h, p))
-        override fun createSocket(h: String, p: Int, l: InetAddress, lp: Int) = sni(base.createSocket(h, p, l, lp))
-        override fun createSocket(h: InetAddress, p: Int) = sni(base.createSocket(h, p))
-        override fun createSocket(h: InetAddress, p: Int, l: InetAddress, lp: Int) = sni(base.createSocket(h, p, l, lp))
+    private fun direct(u: URL, ip: String, timeout: Int): ByteArray {
+        val host = u.host
+        val raw = Socket()
+        raw.connect(java.net.InetSocketAddress(ip, if (u.port > 0) u.port else 443), timeout)
+        raw.soTimeout = timeout
+        // имя хоста (не IP) в createSocket: из него TLS берёт SNI
+        val ssl = (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(raw, host, raw.port, true) as SSLSocket
+        ssl.use { s ->
+            s.sslParameters = s.sslParameters.apply { serverNames = listOf(SNIHostName(host)) }
+            s.startHandshake()
+            if (!HttpsURLConnection.getDefaultHostnameVerifier().verify(host, s.session))
+                throw javax.net.ssl.SSLPeerUnverifiedException("certificate is not for $host")
+            val path = u.file.ifEmpty { "/" }
+            s.outputStream.write(("GET $path HTTP/1.1\r\nHost: $host\r\nUser-Agent: LumenPlay/1.0\r\n" +
+                "Accept-Encoding: identity\r\nConnection: close\r\n\r\n").toByteArray())
+            s.outputStream.flush()
+            val inp = java.io.BufferedInputStream(s.inputStream)
+            val status = line(inp)
+            val code = status.split(' ').getOrNull(1)?.toIntOrNull() ?: 0
+            var length = -1; var chunked = false
+            while (true) {
+                val h = line(inp)
+                if (h.isEmpty()) break
+                val k = h.substringBefore(':').trim().lowercase(Locale.ROOT); val v = h.substringAfter(':').trim()
+                if (k == "content-length") length = v.toIntOrNull() ?: -1
+                if (k == "transfer-encoding" && v.contains("chunked", true)) chunked = true
+            }
+            if (code !in 200..299) throw java.io.IOException("HTTP $code")
+            val out = java.io.ByteArrayOutputStream()
+            if (chunked) {
+                while (true) {
+                    val n = line(inp).substringBefore(';').trim().toInt(16)
+                    if (n == 0) break
+                    copy(inp, out, n); line(inp)
+                }
+            } else if (length >= 0) copy(inp, out, length)
+            else { val b = ByteArray(16384); while (true) { val r = inp.read(b); if (r < 0) break; out.write(b, 0, r); if (out.size() > MAX) break } }
+            return out.toByteArray()
+        }
+    }
+
+    private fun copy(i: InputStream, o: java.io.ByteArrayOutputStream, n: Int) {
+        if (n > MAX) throw java.io.IOException("too large")
+        val b = ByteArray(16384); var left = n
+        while (left > 0) { val r = i.read(b, 0, minOf(b.size, left)); if (r < 0) throw java.io.EOFException(); o.write(b, 0, r); left -= r }
+    }
+
+    private fun line(i: InputStream): String {
+        val sb = StringBuilder()
+        while (true) {
+            val c = i.read()
+            if (c < 0 || c == '\n'.code) break
+            if (c != '\r'.code) sb.append(c.toChar())
+            if (sb.length > 8192) throw java.io.IOException("header too long")
+        }
+        return sb.toString()
     }
 }
 
@@ -119,8 +170,8 @@ object Tmdb {
     val enabled get() = BuildConfig.TMDB_KEY.isNotEmpty()
     private val lang get() = if (Locale.getDefault().language == "ru") "ru-RU" else Locale.getDefault().toLanguageTag()
 
-    private fun get(path: String, params: Map<String, String>): JSONObject {
-        val q = (params + mapOf("api_key" to BuildConfig.TMDB_KEY, "language" to lang))
+    private fun get(path: String, params: Map<String, String>, language: String = lang): JSONObject {
+        val q = (params + mapOf("api_key" to BuildConfig.TMDB_KEY, "language" to language))
             .entries.joinToString("&") { it.key + "=" + URLEncoder.encode(it.value, "UTF-8") }
         return JSONObject(Resolve.open("https://api.themoviedb.org/3$path?$q").bufferedReader().use { it.readText() })
     }
@@ -145,7 +196,9 @@ object Tmdb {
             if (txt != "-" && age < 30L * 86400_000L) return runCatching { Meta.fromJson(JSONObject(txt)) }.getOrNull()
         }
         val m = runCatching {
-            val res = get("/search/multi", mapOf("query" to title)).optJSONArray("results") ?: return@runCatching null
+            // кириллическое название ищем по-русски: так оно совпадёт с русским названием в TMDB
+            val language = if (title.any { it in 'а'..'я' || it in 'А'..'Я' || it == 'ё' || it == 'Ё' }) "ru-RU" else lang
+            val res = get("/search/multi", mapOf("query" to title), language).optJSONArray("results") ?: return@runCatching null
             val want = norm(title)
             (0 until res.length()).mapNotNull { Meta.from(res.getJSONObject(it)) }
                 .maxByOrNull { x ->
@@ -156,7 +209,7 @@ object Tmdb {
                     if (x.backdrop != null) s += 10
                     s + minOf(x.rating, 10.0)
                 }?.takeIf { norm(it.title) == want || (it.original != null && norm(it.original) == want) || year != null && it.year == year }
-        }.getOrNull()
+        }.onFailure { android.util.Log.w("LumenTmdb", "find \"$title\": $it") }.getOrNull()
         runCatching { f.writeText(m?.toJson()?.toString() ?: "-") }
         return m
     }
