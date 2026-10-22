@@ -16,8 +16,8 @@ android {
         applicationId 'com.xgimiru.player'
         minSdk 26
         targetSdk 34
-        versionCode 13
-        versionName '0.12'
+        versionCode 14
+        versionName '1.0'
         // версия встроенного TorrServer (тег upstream), для экрана настроек
         buildConfigField 'String', 'TORRSERVER', "\"${rootProject.file('torrserver/VERSION').text.trim()}\""
         // Ключ TMDB (обложки, описания, поиск фильмов) — только с машины сборки, в git его нет:

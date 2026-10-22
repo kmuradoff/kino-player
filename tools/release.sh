@@ -1,5 +1,5 @@
 #!/bin/bash
-# Выпуск «Кино»: собрать подписанный APK, сделать kino-update.json и выложить релиз на GitHub.
+# Выпуск Lumen Play (до 1.0 «Кино»): собрать подписанный APK, сделать kino-update.json и выложить релиз на GitHub.
 #   tools/release.sh "что нового (одна-две строки)"
 # Нужно: local.properties с kino.* (ключ подписи), gh (вход в GitHub), Gradle (GRADLE=путь, если не в PATH),
 # Go и Android NDK для встроенного торрент-движка (torrserver/build.sh).
@@ -15,7 +15,7 @@ apksigner=$(ls -d "${ANDROID_HOME:-$HOME/Library/Android/sdk}"/build-tools/*/apk
 # С 0.9 два APK: arm64-v8a и armeabi-v7a. Каждый должен быть подписан релизным ключом, а не отладочным.
 args=()
 for abi in arm64-v8a armeabi-v7a; do
-  apk="$out/kino-$ver-$abi.apk"
+  apk="$out/lumen-play-$ver-$abi.apk"
   cp "app/build/outputs/apk/release/app-$abi-release.apk" "$apk"
   # вывод в переменную: grep -q в трубе под pipefail рвёт её раньше времени (SIGPIPE)
   certs=$("$apksigner" verify --print-certs "$apk")
@@ -28,7 +28,7 @@ done
 python3 - "$out/kino-update.json" "$code" "$ver" "$notes" "${args[@]}" <<'PY'
 import json, sys
 f, code, ver, notes, *rest = sys.argv[1:]
-url = f"https://github.com/kmuradoff/kino-player/releases/download/v{ver}/kino-{ver}-%s.apk"
+url = f"https://github.com/kmuradoff/kino-player/releases/download/v{ver}/lumen-play-{ver}-%s.apk"
 apks = {rest[i]: {"apk": url % rest[i], "size": int(rest[i + 2]), "sha256": rest[i + 1]}
         for i in range(0, len(rest), 3)}
 # верхние apk/size/sha256: сборка arm64, их читает 0.8 (она была только 64-битной)
@@ -39,7 +39,7 @@ PY
 tsver=$(cat torrserver/VERSION)
 src="$out/torrserver-$tsver-src.tar.gz"
 torrserver/build.sh --source "$src"
-gh release create "v$ver" "$out/kino-$ver-arm64-v8a.apk" "$out/kino-$ver-armeabi-v7a.apk" "$out/kino-update.json" "$src" \
-  -R kmuradoff/kino-player --title "Кино $ver" --latest \
+gh release create "v$ver" "$out/lumen-play-$ver-arm64-v8a.apk" "$out/lumen-play-$ver-armeabi-v7a.apk" "$out/kino-update.json" "$src" \
+  -R kmuradoff/kino-player --title "Lumen Play $ver" --latest \
   --notes "$notes"$'\n\n'"Исходники встроенного TorrServer $tsver (GPL-3.0): $(basename "$src"). Source of the built-in TorrServer $tsver (GPL-3.0): $(basename "$src")."
 echo "готово: v$ver"
