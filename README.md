@@ -26,6 +26,10 @@ Since 0.9 every release has two APKs: `kino-<version>-arm64-v8a.apk` for 64-bit 
 - **Dolby Vision профиля 5** там, где прошивка его не поддерживает: плеер сам разбирает
   метаданные RPU каждого кадра, а шейдер OpenGL ES переводит картинку в HDR10 или в SDR с
   тон-маппингом. У профилей 7 и 8 слой Dolby Vision вырезается, и видео идёт как обычный HDR10.
+- **Dolby Vision через проектор, как в Kodi**: если экран и декодер умеют Dolby Vision, плеер отдаёт
+  видео им, а профиль 7 (двухслойные BD-remux) на лету переводит в 8.1, как libdovi в Kodi.
+  В настройках можно убрать поля кадра (L5) и выключить HDR10+. Пункты видны только там, где
+  устройство это умеет.
 - **Внешний плеер для Лампы, TorrServe и других приложений.** Понимает параметры, которые
   передают MX Player и VLC (название, позиция, список серий, субтитры), и возвращает позицию,
   на которой вы остановились.
@@ -117,6 +121,10 @@ Features:
   metadata of every frame, and an OpenGL ES shader converts the picture to HDR10 or to
   tone-mapped SDR. For profiles 7 and 8 the Dolby Vision layer is stripped and the video plays
   as plain HDR10.
+- **Dolby Vision on the display, as in Kodi**: when the display and the decoder support Dolby Vision,
+  the player hands the video to them and converts profile 7 (dual-layer BD remuxes) to 8.1 on the
+  fly, as Kodi does with libdovi. Settings can remove the frame borders (L5) and turn HDR10+ off.
+  These options appear only where the device supports them.
 - **External player for Lampa, TorrServe and other apps.** It understands the intent extras
   used with MX Player and VLC (title, position, playlist, subtitles) and returns the position
   where you stopped.

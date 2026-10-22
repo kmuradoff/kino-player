@@ -35,6 +35,7 @@ import android.view.View
 import androidx.media3.common.VideoSize
 import com.xgimiru.player.dovi.DoviRenderer
 import com.xgimiru.player.dovi.DoviStore
+import com.xgimiru.player.dovi.HdrPolicy
 import com.xgimiru.player.dovi.RpuTapExtractorsFactory
 import java.util.Locale
 
@@ -103,7 +104,9 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
         }
         trackSelector = selector
         player = ExoPlayer.Builder(ctx, renderers)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(ctx, http), RpuTapExtractorsFactory(dovi)))
+            .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(ctx, http), RpuTapExtractorsFactory(dovi) {
+                HdrPolicy.caps(ctx) to HdrPolicy.prefs(ctx)
+            }))
             .setLoadControl(load)
             .setTrackSelector(selector)
             .setHandleAudioBecomingNoisy(true)
@@ -216,6 +219,7 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
         }
         val hdr = when {
             dovi.active -> "Dolby Vision 5"
+            dovi.plan?.label != null -> dovi.plan?.label
             f.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION || f.codecs?.startsWith("dvh") == true -> "Dolby Vision"
             f.colorInfo?.colorTransfer == C.COLOR_TRANSFER_ST2084 -> "HDR10"
             f.colorInfo?.colorTransfer == C.COLOR_TRANSFER_HLG -> "HLG"

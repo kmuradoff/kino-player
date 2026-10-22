@@ -14,6 +14,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import com.xgimiru.player.ui.tr
 
 /** Настройки «Кино»: откуда брать торренты, память под кэш, движок для Лампы. */
 class SettingsActivity : Activity() {
@@ -121,11 +122,49 @@ class SettingsActivity : Activity() {
             note("TorrServer: GPL-3.0, github.com/YouROK/TorrServer. Журнал движка: " +
                 "Android/data/$packageName/files/torrserver.log")
         }
+        hdrSection()
         com.xgimiru.player.dlna.DlnaSettings.section(this, { header(it) }) { t, h, s, c -> row(t, h, s, c) }
         val target = focus?.let { list.getChildAt(it) }?.takeIf { it.isFocusable }
             ?: (0 until list.childCount).map { list.getChildAt(it) }.firstOrNull { it.isFocusable && it.tag == "selected" }
         // после разметки: иначе фокус достаётся самому списку
         list.post { target?.requestFocus() }
+    }
+
+    /**
+     * HDR, как в Kodi. Пункты видны, только если устройство это умеет: Dolby Vision — когда экран
+     * и декодер знают DV (на Z9X нет: XGIMI выключила DV), HDR10+ — когда экран его принимает.
+     */
+    private fun hdrSection() {
+        val caps = com.xgimiru.player.dovi.HdrPolicy.caps(this)
+        val p = com.xgimiru.player.dovi.HdrPolicy.prefs(this)
+        fun set(key: String, v: Boolean) = com.xgimiru.player.dovi.HdrPolicy.set(this, key, v)
+        if (!caps.dvHardware && !caps.hdr10PlusDisplay) return
+        header(tr("Видео HDR", "HDR video"))
+        if (caps.dvHardware) {
+            row(tr("Dolby Vision через проектор", "Dolby Vision on the projector"),
+                if (p.dvHardware) tr("Dolby Vision обрабатывает сам проектор", "the projector processes Dolby Vision itself")
+                else tr("выключено: Dolby Vision играет как HDR10", "off: Dolby Vision plays as HDR10"), p.dvHardware) {
+                set("dvHardware", !p.dvHardware)
+            }
+            if (p.dvHardware && 8 in caps.dvProfiles && 7 !in caps.dvProfiles) {
+                row(tr("Профиль 7 → 8.1", "Profile 7 → 8.1"),
+                    tr("двухслойные раздачи (BD-remux) тоже идут через Dolby Vision, слой улучшения отбрасывается",
+                        "dual-layer releases (BD remux) also go through Dolby Vision, the enhancement layer is dropped"),
+                    p.p7to81) { set("dvP7to81", !p.p7to81) }
+            }
+            if (p.dvHardware) {
+                row(tr("Убрать поля кадра (L5)", "Remove frame borders (L5)"),
+                    tr("если проектор обрезает или сдвигает картинку в Dolby Vision", "if the projector crops or shifts Dolby Vision video"),
+                    p.zeroL5) { set("dvZeroL5", !p.zeroL5) }
+            }
+        }
+        if (caps.hdr10PlusDisplay) {
+            row("HDR10+",
+                if (p.hdr10Plus) tr("яркость подстраивается под каждую сцену", "brightness follows each scene")
+                else tr("выключено: такие фильмы идут как HDR10", "off: these films play as HDR10"), p.hdr10Plus) {
+                set("hdr10Plus", !p.hdr10Plus)
+            }
+        }
     }
 
     private fun setCache(mb: Int) {
