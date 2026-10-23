@@ -80,7 +80,10 @@ object WatchNext {
             n.season?.let { put(TvContract.WatchNextPrograms.COLUMN_SEASON_DISPLAY_NUMBER, it) }
             n.episode?.let { put(TvContract.WatchNextPrograms.COLUMN_EPISODE_DISPLAY_NUMBER, it) }
             n.year?.let { put(TvContract.WatchNextPrograms.COLUMN_RELEASE_DATE, it) }
-            put(TvContract.WatchNextPrograms.COLUMN_WATCH_NEXT_TYPE, TvContract.WatchNextPrograms.WATCH_NEXT_TYPE_CONTINUE)
+            // позиция 0 — следующая серия после досмотренной (History.save из плеера)
+            put(TvContract.WatchNextPrograms.COLUMN_WATCH_NEXT_TYPE,
+                if (e.position == 0L && e.playlist != null) TvContract.WatchNextPrograms.WATCH_NEXT_TYPE_NEXT
+                else TvContract.WatchNextPrograms.WATCH_NEXT_TYPE_CONTINUE)
             put(TvContract.WatchNextPrograms.COLUMN_TITLE, meta?.title?.ifBlank { null } ?: n.title)
             meta?.overview?.let { put(TvContract.WatchNextPrograms.COLUMN_SHORT_DESCRIPTION, it.take(300)) }
             put(TvContract.WatchNextPrograms.COLUMN_LAST_PLAYBACK_POSITION_MILLIS, e.position.toInt())

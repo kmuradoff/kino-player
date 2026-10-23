@@ -65,6 +65,8 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
     private val clockFormat = SimpleDateFormat("HH:mm", Locale("ru"))
 
     private var items: List<Item> = emptyList()
+    /** Id списка серий в [Playlists], если видео открыто из списка (или список восстановлен по истории). */
+    private var playlist: String? = null
     private var index = 0
     private var controlsShown = false
     private var panelOpen = false
@@ -172,13 +174,14 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         // субтитры каждой серии (так передаёт TorrentActivity): по строке на серию, ссылки через \n
         val listSubs = intent.getStringArrayExtra("video_list.subs")
         index = 0
+        playlist = null
         items = if (list.size > 1) {
             index = list.indexOf(uri).coerceAtLeast(0)
             list.mapIndexed { i, u ->
                 val itemSubs = listSubs?.getOrNull(i)?.lines()?.filter { it.isNotBlank() }?.map(Uri::parse)
                 Item(u, names?.getOrNull(i) ?: Formats.titleFromPath(u.lastPathSegment), itemSubs ?: if (u == uri) subs else emptyList())
-            }
-        } else listOf(Item(uri, baseTitle, subs))
+            }.also { rememberPlaylist(it) }
+        } else restorePlaylist(uri, subs) ?: listOf(Item(uri, baseTitle, subs))
         val own = items.any { TorrEngine.isOwn(it.uri) }
         if (own) TorrService.hold(this, HOLD) else if (ownTorrents) TorrService.release(this, HOLD)
         ownTorrents = own
@@ -194,6 +197,29 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         resumedFrom = startPos.takeIf { it > 0 && explicit == null }
         play(index, startPos)
         resumedFrom?.let { showToast("Продолжаем с ${Time.format(it)}", "▲ — смотреть с начала", 5000) }
+    }
+
+    private fun rememberPlaylist(list: List<Item>) {
+        val id = Playlists.id(list.map { History.key(it.uri) })
+        Playlists.put(this, id, list.map { Playlists.Item(it.uri.toString(), it.title, it.subs.map(Uri::toString)) })
+        playlist = id
+    }
+
+    /**
+     * Открыли одну серию («Продолжить просмотр» в Lumen Play или в лаунчере): если в истории она из списка,
+     * берём весь список, чтобы дальше шли следующие серии. Ссылка самой серии — та, с которой открыли.
+     */
+    private fun restorePlaylist(uri: Uri, subs: List<Uri>): List<Item>? {
+        val key = History.key(uri)
+        val id = History.get(this, key)?.playlist ?: return null
+        val saved = Playlists.get(this, id)?.takeIf { it.size > 1 } ?: return null
+        val at = saved.indexOfFirst { History.key(Uri.parse(it.uri)) == key }.takeIf { it >= 0 } ?: return null
+        index = at
+        playlist = id
+        return saved.mapIndexed { i, it ->
+            if (i == at) Item(uri, it.name, subs.ifEmpty { it.subs.map(Uri::parse) })
+            else Item(Uri.parse(it.uri), it.name, it.subs.map(Uri::parse))
+        }
     }
 
     /** Запуск серии [i]. [forceVlc] — запасной движок после сбоя Media3. */
@@ -764,12 +790,21 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         val dur = eng.duration.takeIf { it > 0 } ?: return
         val pos = eng.position
         lastSave = System.currentTimeMillis()
+        val list = playlist?.takeIf { items.size > 1 }
+        // список мог убрать prune (запись истории, что на него ссылалась, удалили) — вернуть
+        if (list != null) rememberPlaylist(items)
         val entry = History.Entry(History.key(item.uri), item.uri.toString(),
-            intent.getStringExtra("title")?.takeIf { items.size == 1 } ?: item.title, pos, dur, lastSave)
+            intent.getStringExtra("title")?.takeIf { items.size == 1 } ?: item.title, pos, dur, lastSave, list)
         // дошли до титров: серия просмотрена, в «Продолжить просмотр» её не оставляем
         val inCredits = Chapters.creditsStart(chapters, dur)?.let { pos >= it } == true
-        if (entry.finished || completed || inCredits) History.remove(this, entry.key)
-        else if (pos > 15_000) {
+        if (entry.finished || completed || inCredits) {
+            // вместо неё — следующая серия с начала, если её ещё не начинали (сначала она: удаление
+            // последней записи со ссылкой на список убрало бы и сам список)
+            val next = items.getOrNull(index + 1)
+            if (list != null && next != null && History.get(this, History.key(next.uri)) == null)
+                History.save(this, History.Entry(History.key(next.uri), next.uri.toString(), next.title, 0, 0, lastSave, list))
+            History.remove(this, entry.key)
+        } else if (pos > 15_000) {
             History.save(this, entry)
             // кадр из видео — обложка в «Продолжить просмотр» лаунчера
             if (pos > 60_000) WatchNext.grab(this, video, entry) { WatchNext.publish(this, entry) }
