@@ -18,6 +18,8 @@ interface Engine {
         fun onEnded()
         /** [fallback] — стоит попробовать другой движок (формат/кодек не пошёл). */
         fun onError(message: String, fallback: Boolean)
+        /** Движок сам встал на паузу: звук ушёл с Bluetooth или наушников (AUDIO_BECOMING_NOISY). */
+        fun onPausedBySystem() {}
     }
 
     data class Track(val id: String, val label: String, val selected: Boolean)

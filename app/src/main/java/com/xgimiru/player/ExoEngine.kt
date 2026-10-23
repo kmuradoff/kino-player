@@ -122,6 +122,11 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
 
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) = listener.onStateChanged()
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                // Bluetooth-колонка отключилась: Media3 сам ставит паузу, а экран об этом должен знать,
+                // иначе кадр просто застывает (Z9X, 2026-10-23)
+                if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY) listener.onPausedBySystem()
+            }
             override fun onPlaybackStateChanged(state: Int) {
                 when (state) {
                     Player.STATE_BUFFERING -> listener.onBuffering(true, -1)

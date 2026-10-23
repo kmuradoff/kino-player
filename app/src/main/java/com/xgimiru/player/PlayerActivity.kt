@@ -110,12 +110,36 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
     override fun onStart() {
         super.onStart()
         if (ownTorrents) TorrService.hold(this, HOLD)
+        // вернулись после сна или из другого приложения: открываем видео заново с того же места, на паузе
+        stoppedAt?.let { pos ->
+            stoppedAt = null
+            if (items.isNotEmpty() && engine == null) {
+                play(index, pos, forceVlc = engineIsVlc)
+                engine?.pause()
+                paused = true
+                showControls(0)
+            }
+        }
     }
+
+    /**
+     * Позиция, с которой плеер ушёл в onStop (null — не уходил). При выключенном экране аппаратный декодер
+     * не может отдать кадры и после включения падал (Z9X 2026-10-24: 786 неудачных dequeue за 12 с, ошибка
+     * c2.mtk.avc.decoder, переход на VLC, чёрный экран), поэтому движок закрываем и открываем заново.
+     */
+    private var stoppedAt: Long? = null
 
     override fun onStop() {
         super.onStop()
         save()
-        engine?.let { if (it.isPlaying) { it.pause(); paused = true } }
+        engine?.let {
+            if (it.isPlaying) { it.pause(); paused = true }
+            if (!completed && error.visibility != View.VISIBLE && !isFinishing) {
+                stoppedAt = it.position.takeIf { p -> p > 0 } ?: startFrom
+                it.release()
+                engine = null
+            }
+        }
         // встроенный торрент-движок остановится, если не вернуться к фильму за полторы минуты
         if (ownTorrents) TorrService.release(this, HOLD)
     }
@@ -309,6 +333,14 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         if (playing) { paused = false; engineRestarted = false }
         dim.animate().alpha(if (playing || loading) 0f else if (paused) 1f else 0f).setDuration(250).start()
         if (playing) scheduleHide() else if (paused) showControls(0)
+    }
+
+    override fun onPausedBySystem() {
+        if (paused) return
+        paused = true
+        showControls(0)
+        onStateChanged()
+        showToast("Пауза: звук ушёл с Bluetooth", "OK — продолжить на проекторе", 5000)
     }
 
     override fun onBuffering(active: Boolean, percent: Int) {
