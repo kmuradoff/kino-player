@@ -110,7 +110,8 @@ object Playlists {
 
 /** Скорость и пиры торрента — показываем, пока идёт загрузка. */
 object TorrServe {
-    data class Stat(val speedMbit: Double, val peers: Int, val seeders: Int, val complete: Boolean)
+    /** [fileBytes] — размер играющего файла (по index ссылки), 0 — неизвестен. */
+    data class Stat(val speedMbit: Double, val peers: Int, val seeders: Int, val complete: Boolean, val fileBytes: Long = 0)
 
     /** Ссылка TorrServe: /stream и link= с magnet, btih или hash торрента (40 hex), а не любая ссылка с «link». */
     fun isTorrServe(uri: Uri): Boolean {
@@ -131,7 +132,11 @@ object TorrServe {
         val o = JSONObject(c.inputStream.bufferedReader().use { it.readText() })
         c.disconnect()
         val loaded = o.optLong("loaded_size"); val size = o.optLong("torrent_size")
+        val index = uri.getQueryParameter("index")?.toIntOrNull()
+        val files = o.optJSONArray("file_stats")
+        val fileBytes = if (index == null || files == null) 0L
+            else (0 until files.length()).map { files.getJSONObject(it) }.firstOrNull { it.optInt("id") == index }?.optLong("length") ?: 0L
         Stat(o.optDouble("download_speed", 0.0) * 8 / 1e6, o.optInt("active_peers"), o.optInt("connected_seeders"),
-            complete = size > 0 && loaded >= size * 0.99)
+            complete = size > 0 && loaded >= size * 0.99, fileBytes = fileBytes)
     }.getOrNull()
 }

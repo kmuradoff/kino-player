@@ -456,13 +456,42 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
 
     private fun showStat() {
         val s = torrentStat
+        val need = neededMbit(s)
         val line = when {
             s == null -> ""
             s.complete -> "✓ загружено полностью"
+            need > 0 -> "↓ %.1f из %.0f Мбит/с · %d пир%s".format(s.speedMbit, need, s.peers, plural(s.peers))
             else -> "↓ %.1f Мбит/с · %d пир%s".format(s.speedMbit, s.peers, plural(s.peers))
         }
         net.text = line
         bufferDetail.text = line
+        warnSlowSwarm(s, need)
+    }
+
+    /** Битрейт файла: размер × 8 / длительность, Мбит/с (0 — не знаем). */
+    private fun neededMbit(s: TorrServe.Stat?): Double {
+        val dur = engine?.duration ?: 0L
+        if (s == null || s.fileBytes <= 0 || dur < 60_000) return 0.0
+        return s.fileBytes * 8.0 / (dur / 1000.0) / 1e6
+    }
+
+    private var slowSince = 0L
+    private var slowWarnedFor: Uri? = null
+
+    /**
+     * Раздача стабильно медленнее фильма (меньше 90 % битрейта полминуты, во время загрузки): говорим прямо,
+     * один раз на файл. Кэш движка в памяти — 256 МБ, это меньше минуты такого видео, так что пауза не спасёт:
+     * поможет раздача с большим числом сидов или полегче.
+     */
+    private fun warnSlowSwarm(s: TorrServe.Stat?, need: Double) {
+        val uri = current()?.uri ?: return
+        if (s == null || s.complete || need <= 0 || s.speedMbit >= need * 0.9 || slowWarnedFor == uri) { slowSince = 0; return }
+        val now = System.currentTimeMillis()
+        if (slowSince == 0L) { slowSince = now; return }
+        if (now - slowSince < 30_000 || buffering.visibility != View.VISIBLE) return
+        slowWarnedFor = uri
+        showToast("Раздача медленнее фильма: %.0f из %.0f Мбит/с".format(s.speedMbit, need),
+            "Будут остановки. Выберите раздачу с большим числом сидов или полегче (BDRip, WEB-DL)", 9000)
     }
 
     private fun plural(n: Int) = when {
