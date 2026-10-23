@@ -95,6 +95,7 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_player)
         bindViews()
+        startSession()
         open(intent)
         handler.post(tick)
     }
@@ -120,6 +121,8 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
     }
 
     override fun onDestroy() {
+        session?.release()
+        session = null
         PlayerBridge.detach(this, completed)
         if (ownTorrents) TorrService.release(this, HOLD)
         handler.removeCallbacksAndMessages(null)
@@ -549,6 +552,61 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
             else -> PlayerBridge.State.LOADING
         }
         PlayerBridge.report(this, current()?.uri?.toString(), state, e?.position ?: 0L, e?.duration ?: 0L)
+        reportSession(state, e)
+    }
+
+    // ── Медиасессия: кнопки Bluetooth-колонки и наушников (AVRCP) ────────────
+    // Пульт присылает клавиши прямо в окно (onKeyDown), а кнопки колонки система отдаёт только активной
+    // медиасессии: без неё пауза на колонке ничего не делала.
+    private var session: android.media.session.MediaSession? = null
+    private var sessionTitle: String? = null
+
+    private fun startSession() {
+        session = runCatching {
+            android.media.session.MediaSession(this, "LumenPlay").apply {
+                setCallback(object : android.media.session.MediaSession.Callback() {
+                    override fun onPlay() = remotePlay()
+                    override fun onPause() = remotePause()
+                    override fun onSkipToNext() { if (index + 1 < items.size) playNext() }
+                    override fun onSkipToPrevious() {
+                        if (index > 0) { save(); play(index - 1, savedPosition(items[index - 1]) ?: 0) }
+                    }
+                    override fun onSeekTo(pos: Long) = remoteSeek(pos)
+                    override fun onFastForward() { engine?.let { it.seekTo(it.position + 10_000) } }
+                    override fun onRewind() { engine?.let { it.seekTo((it.position - 10_000).coerceAtLeast(0)) } }
+                    override fun onStop() = remotePause()
+                })
+                isActive = true
+            }
+        }.getOrNull()
+    }
+
+    private fun reportSession(state: PlayerBridge.State, e: Engine?) {
+        val s = session ?: return
+        val st = when (state) {
+            PlayerBridge.State.PLAYING -> android.media.session.PlaybackState.STATE_PLAYING
+            PlayerBridge.State.PAUSED -> android.media.session.PlaybackState.STATE_PAUSED
+            PlayerBridge.State.STOPPED -> android.media.session.PlaybackState.STATE_STOPPED
+            else -> android.media.session.PlaybackState.STATE_BUFFERING
+        }
+        var actions = android.media.session.PlaybackState.ACTION_PLAY or android.media.session.PlaybackState.ACTION_PAUSE or
+            android.media.session.PlaybackState.ACTION_PLAY_PAUSE or android.media.session.PlaybackState.ACTION_SEEK_TO or
+            android.media.session.PlaybackState.ACTION_FAST_FORWARD or android.media.session.PlaybackState.ACTION_REWIND or
+            android.media.session.PlaybackState.ACTION_STOP
+        if (index + 1 < items.size) actions = actions or android.media.session.PlaybackState.ACTION_SKIP_TO_NEXT
+        if (index > 0) actions = actions or android.media.session.PlaybackState.ACTION_SKIP_TO_PREVIOUS
+        s.setPlaybackState(android.media.session.PlaybackState.Builder()
+            .setActions(actions)
+            .setState(st, e?.position ?: 0L, if (st == android.media.session.PlaybackState.STATE_PLAYING) (e?.speed ?: 1f) else 0f)
+            .build())
+        val title = current()?.title
+        if (title != null && title != sessionTitle) {
+            sessionTitle = title
+            s.setMetadata(android.media.MediaMetadata.Builder()
+                .putString(android.media.MediaMetadata.METADATA_KEY_TITLE, title)
+                .putLong(android.media.MediaMetadata.METADATA_KEY_DURATION, e?.duration ?: 0L)
+                .build())
+        }
     }
 
     override fun remotePlay() { if (paused && error.visibility != View.VISIBLE) togglePlay() }
