@@ -36,3 +36,6 @@ Thumbs.db
 
 # Встроенный TorrServer: сборка и готовые libtorrserver.so (torrserver/build.sh)
 torrserver/out/
+
+# Release folders (release/<version>/): APKs and the TorrServer source archive are release assets, not git
+release/**/*.tar.gz

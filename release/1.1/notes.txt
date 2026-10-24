@@ -1,0 +1,13 @@
+Lumen Play 1.1:
+- Dolby Vision как в Kodi: если проектор или телевизор умеет Dolby Vision, видео идёт через него, двухслойные BD-remux тоже. HDR10+ можно выключить в настройках. Новые пункты видны только там, где устройство это поддерживает.
+- «Продолжить просмотр» помнит весь сериал: следующие серии идут дальше сами, а досмотренную серию сменяет следующая.
+- Работают кнопки Bluetooth-колонки и наушников: пауза, воспроизведение, следующая и предыдущая серия.
+- Торренты подключаются сразу к большему числу раздающих. Рядом со скоростью видно, сколько нужно фильму, и плеер скажет, если раздача не успевает.
+- Если Bluetooth-колонка отключилась, фильм просто встаёт на паузу. После сна проектора видео открывается на том же месте, а не с чёрным экраном.
+
+Lumen Play 1.1:
+- Dolby Vision as in Kodi: if the projector or TV supports Dolby Vision, the video goes through it, dual-layer BD remuxes too. HDR10+ can be turned off in Settings. The new options appear only where the device supports them.
+- Continue watching keeps the whole series: the next episodes follow on their own, and a finished episode is replaced by the next one.
+- Bluetooth speaker and headphone buttons work: pause, play, next and previous episode.
+- Torrents connect to more seeders at once. The speed is shown next to what the film needs, and the player tells you when a torrent is too slow for it.
+- When a Bluetooth speaker disconnects, the film simply pauses. After the projector sleeps, the video opens at the same place instead of a black screen.
