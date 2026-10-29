@@ -68,6 +68,11 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
     /** Id списка серий в [Playlists], если видео открыто из списка (или список восстановлен по истории). */
     private var playlist: String? = null
     private var index = 0
+    /** Заголовки запроса из интента (Lumen Web: Referer, Origin, User-Agent, Cookie) — на весь список. */
+    private var headers: Map<String, String> = emptyMap()
+    /** Тип из интента (application/x-mpegURL, application/dash+xml, ...) — только для ссылки из data. */
+    private var streamUri: Uri? = null
+    private var streamType: String? = null
     private var controlsShown = false
     private var panelOpen = false
     private var scrubTarget: Long? = null
@@ -200,6 +205,9 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         val names = intent.getStringArrayExtra("video_list.name")
         // субтитры каждой серии (так передаёт TorrentActivity): по строке на серию, ссылки через \n
         val listSubs = intent.getStringArrayExtra("video_list.subs")
+        headers = readHeaders(intent)
+        streamUri = uri
+        streamType = intent.type
         index = 0
         playlist = null
         items = if (list.size > 1) {
@@ -225,6 +233,13 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         play(index, startPos)
         resumedFrom?.let { showToast("Продолжаем с ${Time.format(it)}", "▲ — смотреть с начала", 5000) }
     }
+
+    private fun readHeaders(intent: Intent): Map<String, String> = runCatching {
+        @Suppress("DEPRECATION")
+        val bundle = intent.getBundleExtra(StreamRequest.EXTRA_HEADERS_BUNDLE)
+        val map = bundle?.keySet()?.associateWith { bundle.get(it)?.toString() }
+        StreamRequest.headers(intent.getStringArrayExtra(StreamRequest.EXTRA_HEADERS), map)
+    }.getOrDefault(emptyMap())
 
     private fun rememberPlaylist(list: List<Item>) {
         val id = Playlists.id(list.map { History.key(it.uri) })
@@ -276,6 +291,7 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
             engineIsVlc = wantVlc
             engine!!.setScale(prefs().getInt("scaleMode", 0))
         }
+        engine!!.setRequest(headers, streamType.takeIf { item.uri == streamUri })
         engine!!.open(item.uri, startMs, item.subs)
 
         showTitles()
@@ -811,6 +827,13 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
     private fun buildPanel() {
         val eng = engine ?: return
         panelList.removeAllViews()
+
+        val quality = eng.videoTracks()
+        if (quality.isNotEmpty()) {
+            header("Качество")
+            row("Авто", quality.none { it.selected }) { eng.selectVideo(null) }
+            for (t in quality) row(t.label, t.selected) { eng.selectVideo(t.id) }
+        }
 
         header("Звук")
         val audio = eng.audioTracks()

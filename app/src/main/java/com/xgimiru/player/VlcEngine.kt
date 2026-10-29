@@ -49,11 +49,17 @@ class VlcEngine(ctx: Context, private val host: FrameLayout, private val listene
         get() = player.rate
         set(v) { player.rate = v }
 
+    private var headers: Map<String, String> = emptyMap()
+
+    override fun setRequest(headers: Map<String, String>, mimeHint: String?) { this.headers = headers }
+
     override fun open(uri: Uri, startMs: Long, subs: List<Uri>) {
         length = 0
         val media = Media(vlc, uri)
         media.addOption(":network-caching=4000")
-        media.addOption(":http-user-agent=Kino/1.0 (Android TV)")
+        // libVLC умеет только User-Agent и Referer; Cookie и Origin на запасном движке теряются.
+        media.addOption(":http-user-agent=" + StreamRequest.userAgent(headers))
+        StreamRequest.referer(headers)?.let { media.addOption(":http-referrer=$it") }
         if (startMs > 0) media.addOption(":start-time=%.1f".format(Locale.US, startMs / 1000.0))
         // Старый XviD/DivX — программным декодером: он лёгкий, а аппаратный с ним капризничает.
         media.setHWDecoderEnabled(!Engine.prefersVlc(uri), false)

@@ -80,12 +80,18 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
 
     private val player: ExoPlayer
 
+    /**
+     * HTTP для всего: файл, манифест HLS/DASH, сегменты, ключи, внешние субтитры. Заголовки из интента
+     * ([setRequest]) кладутся сюда до [open]; источники данных берут их при каждом запросе.
+     */
+    private val http = DefaultHttpDataSource.Factory()
+        .setAllowCrossProtocolRedirects(true)
+        .setConnectTimeoutMs(30_000)
+        .setReadTimeoutMs(60_000)          // TorrServe может долго искать пиров
+        .setUserAgent(StreamRequest.DEFAULT_USER_AGENT)
+    private var mimeHint: String? = null
+
     init {
-        val http = DefaultHttpDataSource.Factory()
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(30_000)
-            .setReadTimeoutMs(60_000)          // TorrServe может долго искать пиров
-            .setUserAgent("Kino/1.0 (Android TV)")
         val renderers = DefaultRenderersFactory(ctx)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON) // FFmpeg — если чип не умеет звук
             .setEnableDecoderFallback(true)
@@ -166,16 +172,41 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
         get() = player.playbackParameters.speed
         set(v) { player.playbackParameters = PlaybackParameters(v) }
 
+    override fun setRequest(headers: Map<String, String>, mimeHint: String?) {
+        http.setDefaultRequestProperties(StreamRequest.withoutUserAgent(headers))
+        http.setUserAgent(StreamRequest.userAgent(headers))
+        this.mimeHint = mimeHint
+    }
+
     override fun open(uri: Uri, startMs: Long, subs: List<Uri>) {
-        disableDovi()
-        dovi.reset()
-        trackSelector.setParameters(trackSelector.buildUponParameters().setTunnelingEnabled(tunneling))
-        val subConfigs = subs.map {
-            MediaItem.SubtitleConfiguration.Builder(it).setMimeType(subtitleMime(it)).setLanguage(subtitleLanguage(it)).build()
+        try {
+            disableDovi()
+            dovi.reset()
+            // ручной выбор качества прошлого фильма к новому не относится
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                .clearOverridesOfType(C.TRACK_TYPE_VIDEO).build()
+            trackSelector.setParameters(trackSelector.buildUponParameters().setTunnelingEnabled(tunneling))
+            val subConfigs = subs.map {
+                MediaItem.SubtitleConfiguration.Builder(it).setMimeType(subtitleMime(it)).setLanguage(subtitleLanguage(it)).build()
+            }
+            val item = MediaItem.Builder().setUri(uri).setSubtitleConfigurations(subConfigs)
+            StreamRequest.streamMime(mimeHint, uri.path, uri.query)?.let { item.setMimeType(it) }
+            player.setMediaItem(item.build(), startMs)
+            player.prepare()
+            player.play()
+        } catch (e: Exception) {
+            failOpen(e)
+        } catch (e: LinkageError) {
+            // нет класса модуля (так падал HLS до 1.2) — сообщение вместо вылета
+            failOpen(e)
         }
-        player.setMediaItem(MediaItem.Builder().setUri(uri).setSubtitleConfigurations(subConfigs).build(), startMs)
-        player.prepare()
-        player.play()
+    }
+
+    /** Источник не собрался: сообщить после возврата из open, чтобы экран мог сменить движок. */
+    private fun failOpen(e: Throwable) {
+        android.util.Log.w("ExoEngine", "open failed", e)
+        runCatching { player.stop() }
+        main.post { listener.onError("Этот поток не открывается (${e.javaClass.simpleName}).", true) }
     }
 
     override fun play() = player.play()
@@ -193,6 +224,27 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
 
     override fun selectAudio(id: String) = select(C.TRACK_TYPE_AUDIO, id)
 
+    override fun videoTracks(): List<Engine.Track> {
+        val all = player.currentTracks.groups.withIndex().filter { it.value.type == C.TRACK_TYPE_VIDEO }.flatMap { (gi, g) ->
+            (0 until g.length).filter { g.isTrackSupported(it, true) }.map { Triple(gi, it, g) }
+        }
+        if (all.size < 2) return emptyList()
+        val manual = player.trackSelectionParameters.overrides.values.firstOrNull { it.type == C.TRACK_TYPE_VIDEO }
+        return all.sortedWith(compareByDescending<Triple<Int, Int, Tracks.Group>> { it.third.getTrackFormat(it.second).height }
+            .thenByDescending { it.third.getTrackFormat(it.second).bitrate })
+            .map { (gi, ti, g) ->
+                val chosen = manual != null && manual.mediaTrackGroup == g.mediaTrackGroup && ti in manual.trackIndices
+                Engine.Track("$gi:$ti", qualityLabel(g.getTrackFormat(ti)), chosen)
+            }
+    }
+
+    override fun selectVideo(id: String?) {
+        if (id == null) {
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                .clearOverridesOfType(C.TRACK_TYPE_VIDEO).build()
+        } else select(C.TRACK_TYPE_VIDEO, id)
+    }
+
     override fun selectText(id: String?) {
         if (id == null) {
             player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
@@ -201,8 +253,8 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
     }
 
     private fun select(type: Int, id: String) {
-        val (gi, ti) = id.split(':').map { it.toInt() }
-        val group = player.currentTracks.groups.getOrNull(gi) ?: return
+        val (gi, ti) = id.split(':').mapNotNull { it.toIntOrNull() }.takeIf { it.size == 2 } ?: return
+        val group = player.currentTracks.groups.getOrNull(gi)?.takeIf { it.type == type && ti < it.length } ?: return
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(type, false)
             .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, ti))
@@ -319,6 +371,12 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
         codec(f.sampleMimeType),
     ).distinct().joinToString(" · ").ifBlank { "Дорожка" }
 
+    private fun qualityLabel(f: Format) = listOfNotNull(
+        if (f.height > 0) "${f.height}p" else if (f.width > 0) "${f.width} px" else null,
+        f.bitrate.takeIf { it > 0 }?.let { String.format(Locale("ru"), "%.1f Мбит/с", it / 1_000_000.0) },
+        codec(f.sampleMimeType) ?: f.codecs?.substringBefore('.')?.uppercase(Locale.ROOT),
+    ).joinToString(" · ").ifBlank { "Вариант" }
+
     private fun textLabel(f: Format) = listOfNotNull(
         Formats.language(f.language),
         f.label?.takeIf { it.isNotBlank() && !it.equals(Formats.language(f.language), true) },
@@ -378,6 +436,16 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
         PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ->
             "Источник не отвечает. Если это торрент — проверьте, что TorrServe запущен и у раздачи есть сиды."
         PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS -> "Сервер отказал в доступе к видео."
+        PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED,
+        PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED -> "Список потока (HLS/DASH) не читается."
+        PlaybackException.ERROR_CODE_DRM_SCHEME_UNSUPPORTED,
+        PlaybackException.ERROR_CODE_DRM_PROVISIONING_FAILED,
+        PlaybackException.ERROR_CODE_DRM_CONTENT_ERROR,
+        PlaybackException.ERROR_CODE_DRM_LICENSE_ACQUISITION_FAILED,
+        PlaybackException.ERROR_CODE_DRM_DISALLOWED_OPERATION,
+        PlaybackException.ERROR_CODE_DRM_SYSTEM_ERROR,
+        PlaybackException.ERROR_CODE_DRM_DEVICE_REVOKED,
+        PlaybackException.ERROR_CODE_DRM_LICENSE_EXPIRED -> "Поток защищён (DRM), такой Lumen Play не показывает."
         in 2000..2999 -> "Видео не загружается: источник отвечает слишком медленно или оборвал связь."
         else -> "Формат не поддерживается (${e.errorCodeName.removePrefix("ERROR_CODE_").lowercase()})."
     }

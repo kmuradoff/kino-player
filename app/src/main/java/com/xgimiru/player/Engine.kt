@@ -31,6 +31,12 @@ interface Engine {
     var speed: Float
 
     fun open(uri: Uri, startMs: Long, subs: List<Uri>)
+
+    /**
+     * Перед [open]: заголовки запроса (Referer, Origin, User-Agent, Cookie, ...) и тип потока из интента
+     * (HLS/DASH или null). Действуют до следующего вызова; пустая карта — свой User-Agent и больше ничего.
+     */
+    fun setRequest(headers: Map<String, String>, mimeHint: String?) {}
     fun play()
     fun pause()
     fun seekTo(ms: Long)
@@ -40,6 +46,11 @@ interface Engine {
     fun selectAudio(id: String)
     /** null — выключить субтитры. */
     fun selectText(id: String?)
+
+    /** Качество (варианты HLS/DASH). Пусто — выбирать нечего. selected — только при ручном выборе. */
+    fun videoTracks(): List<Track> = emptyList()
+    /** null — «Авто», адаптивный выбор по скорости сети. */
+    fun selectVideo(id: String?) {}
 
     /** «4K · HEVC · Dolby Vision» */
     fun videoInfo(): String?
