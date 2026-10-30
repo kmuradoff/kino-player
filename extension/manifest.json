@@ -1,0 +1,71 @@
+{
+  "manifest_version": 3,
+  "name": "Отправить на Lumen Play",
+  "short_name": "Lumen Play",
+  "version": "1.0.0",
+  "description": "Отправляет видео со страницы в Lumen Play на проекторе: кнопка, меню на видео или Alt+Shift+L.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "activeTab",
+    "webRequest",
+    "storage",
+    "contextMenus"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "scripts": [
+      "lib/shim.js",
+      "lib/streams.js",
+      "lib/projector.js",
+      "background.js"
+    ]
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "all_frames": true,
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Отправить на Lumen Play",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
+  },
+  "commands": {
+    "send-video": {
+      "suggested_key": {
+        "default": "Alt+Shift+L"
+      },
+      "description": "Отправить видео со страницы на проектор"
+    }
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "lumen-play-send@lumen-os",
+      "strict_min_version": "121.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
+    }
+  }
+}
