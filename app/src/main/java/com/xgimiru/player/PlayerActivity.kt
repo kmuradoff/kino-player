@@ -68,7 +68,7 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
     /** Id списка серий в [Playlists], если видео открыто из списка (или список восстановлен по истории). */
     private var playlist: String? = null
     private var index = 0
-    /** Заголовки запроса из интента (Lumen Web: Referer, Origin, User-Agent, Cookie) — на весь список. */
+    /** Заголовки запроса из интента (расширение браузера: Referer, Origin, User-Agent), на весь список. */
     private var headers: Map<String, String> = emptyMap()
     /** Тип из интента (application/x-mpegURL, application/dash+xml, ...) — только для ссылки из data. */
     private var streamUri: Uri? = null

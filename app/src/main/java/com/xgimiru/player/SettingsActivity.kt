@@ -124,6 +124,7 @@ class SettingsActivity : Activity() {
         }
         hdrSection()
         com.xgimiru.player.dlna.DlnaSettings.section(this, { header(it) }) { t, h, s, c -> row(t, h, s, c) }
+        com.xgimiru.player.send.SendSettings.section(this, { header(it) }, { note(it) }, { t, h, s, c -> row(t, h, s, c) }) { build(null) }
         val target = focus?.let { list.getChildAt(it) }?.takeIf { it.isFocusable }
             ?: (0 until list.childCount).map { list.getChildAt(it) }.firstOrNull { it.isFocusable && it.tag == "selected" }
         // после разметки: иначе фокус достаётся самому списку

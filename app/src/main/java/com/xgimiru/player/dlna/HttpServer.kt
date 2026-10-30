@@ -17,11 +17,12 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
 /**
- * Крошечный HTTP/1.1-сервер для UPnP: описания, SOAP и подписки GENA. Каждое соединение
+ * Крошечный HTTP/1.1-сервер для UPnP (описания, SOAP, подписки GENA) и приёмника
+ * «Отправить на Lumen Play» (send/SendServer). Каждое соединение
  * обслуживается одним запросом и закрывается. Потоков не больше [WORKERS], очередь короткая,
  * заголовки до 16 КБ, тело до 256 КБ; без запросов потоки засыпают и уходят.
  */
-class HttpServer(private val handler: (Request) -> Response) {
+class HttpServer(private val handler: (Request) -> Response, private val name: String = "lumen-dlna") {
 
     class Request(
         val method: String,
@@ -50,7 +51,7 @@ class HttpServer(private val handler: (Request) -> Response) {
 
     private var socket: ServerSocket? = null
     private val pool = ThreadPoolExecutor(WORKERS, WORKERS, 20, TimeUnit.SECONDS, ArrayBlockingQueue(16)) { r ->
-        Thread(r, "lumen-dlna-http").apply { isDaemon = true }
+        Thread(r, "$name-http").apply { isDaemon = true }
     }.apply { allowCoreThreadTimeOut(true) }
 
     val port: Int get() = socket?.localPort ?: 0
@@ -65,7 +66,7 @@ class HttpServer(private val handler: (Request) -> Response) {
             ss.bind(InetSocketAddress(0), 16)
         }
         socket = ss
-        Thread({ acceptLoop(ss) }, "lumen-dlna-accept").apply { isDaemon = true }.start()
+        Thread({ acceptLoop(ss) }, "$name-accept").apply { isDaemon = true }.start()
     }
 
     fun stop() {
@@ -222,8 +223,9 @@ class HttpServer(private val handler: (Request) -> Response) {
             .apply { timeZone = TimeZone.getTimeZone("GMT") }.format(Date())
 
         private fun reason(code: Int) = when (code) {
-            200 -> "OK"; 400 -> "Bad Request"; 404 -> "Not Found"; 405 -> "Method Not Allowed"
-            412 -> "Precondition Failed"; 413 -> "Payload Too Large"; 500 -> "Internal Server Error"
+            200 -> "OK"; 204 -> "No Content"; 400 -> "Bad Request"; 401 -> "Unauthorized"; 403 -> "Forbidden"
+            404 -> "Not Found"; 405 -> "Method Not Allowed"; 409 -> "Conflict"; 410 -> "Gone"
+            412 -> "Precondition Failed"; 413 -> "Payload Too Large"; 429 -> "Too Many Requests"; 500 -> "Internal Server Error"
             503 -> "Service Unavailable"; else -> "Status"
         }
 

@@ -16,8 +16,8 @@ android {
         applicationId 'com.xgimiru.player'
         minSdk 26
         targetSdk 34
-        versionCode 16
-        versionName '1.2'
+        versionCode 17
+        versionName '1.3'
         // версия встроенного TorrServer (тег upstream), для экрана настроек
         buildConfigField 'String', 'TORRSERVER', "\"${rootProject.file('torrserver/VERSION').text.trim()}\""
         // Ключ TMDB (обложки, описания, поиск фильмов) — только с машины сборки, в git его нет:
@@ -90,10 +90,12 @@ dependencies {
     def media3 = '1.6.1'
     implementation "androidx.media3:media3-exoplayer:$media3"
     implementation "androidx.media3:media3-ui:$media3"
-    // Потоки из Lumen Web и IPTV: HLS (.m3u8) и DASH (.mpd). Без них DefaultMediaSourceFactory падает
+    // Потоки из браузера (send/) и IPTV: HLS (.m3u8) и DASH (.mpd). Без них DefaultMediaSourceFactory падает
     // с ClassNotFoundException HlsMediaSource$Factory.
     implementation "androidx.media3:media3-exoplayer-hls:$media3"
     implementation "androidx.media3:media3-exoplayer-dash:$media3"
     implementation 'org.jellyfin.media3:media3-ffmpeg-decoder:1.6.1+2'
     testImplementation 'junit:junit:4.13.2'
+    // org.json в android.jar пустой для тестов на JVM: настоящий, только для тестов (send/SendProtocol)
+    testImplementation 'org.json:json:20231013'
 }

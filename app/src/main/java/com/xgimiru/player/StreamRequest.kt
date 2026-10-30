@@ -3,7 +3,7 @@ package com.xgimiru.player
 import java.util.Locale
 
 /**
- * Что пришло вместе с ссылкой: тип потока и заголовки запроса (Lumen Web, MX Player, Just Player).
+ * Что пришло вместе с ссылкой: тип потока и заголовки запроса (расширение браузера через send/SendServer, MX Player, Just Player).
  *
  * Заголовки:
  *  - extra "headers": String[] {имя, значение, имя, значение, ...} (соглашение MX Player);
