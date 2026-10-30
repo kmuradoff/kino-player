@@ -132,6 +132,8 @@
         <receiver android:name=".dlna.DlnaService$Boot" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <!-- после обновления Lumen Play приёмник видео поднимается сам, без открытия приложения -->
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
         <activity android:name=".dlna.ImageActivity" android:exported="false" android:launchMode="singleTop"

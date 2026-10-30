@@ -22,8 +22,8 @@ import com.xgimiru.player.send.SendServer
 import com.xgimiru.player.ui.tr
 
 /**
- * Служба переднего плана для приёма видео по сети, запускается при включении устройства и при
- * открытии Lumen Play. Всегда держит приёмник «Отправить на Lumen Play» ([SendServer], порт 8765)
+ * Служба переднего плана для приёма видео по сети, запускается при включении устройства, после
+ * обновления Lumen Play и при его открытии. Всегда держит приёмник «Отправить на Lumen Play» ([SendServer], порт 8765)
  * и, если настройка включена ([DlnaSettings]), DLNA-рендерер ([Renderer]). Пока рендерер работает,
  * держит MulticastLock (иначе Wi-Fi отбрасывает поиск SSDP) и следит за сменой сети.
  */
@@ -128,7 +128,7 @@ class DlnaService : Service() {
     /** Поднять приёмник и рендерер после включения устройства. */
     class Boot : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
-            if (intent.action == Intent.ACTION_BOOT_COMPLETED) DlnaService.sync(ctx)
+            if (intent.action == Intent.ACTION_BOOT_COMPLETED || intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) DlnaService.sync(ctx)
         }
     }
 }

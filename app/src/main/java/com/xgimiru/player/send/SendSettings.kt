@@ -3,6 +3,10 @@ package com.xgimiru.player.send
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import com.xgimiru.player.R
 import com.xgimiru.player.ui.tr
 import org.json.JSONArray
@@ -54,6 +58,7 @@ object SendSettings {
         val store = PrefsTokenStore(a)
         val devices = store.list().sortedByDescending { it.created }
         header(tr("Устройства, которым разрешено отправлять видео", "Devices allowed to send videos"))
+        overlayRow(a, row)
         if (devices.isEmpty()) {
             note(tr("Пока никого. Нажмите в браузере на компьютере кнопку расширения «Отправить на Lumen Play» " +
                 "и введите код, который появится на экране.",
@@ -76,6 +81,24 @@ object SendSettings {
                     .setNegativeButton(tr("Отмена", "Cancel"), null)
                     .show()
             }
+        }
+    }
+
+    /**
+     * Без разрешения «поверх других приложений» Android 10+ не даёт открыть плеер, пока
+     * Lumen Play в фоне, и код подключения виден только уведомлением. Пункт виден, только пока
+     * разрешения нет и система умеет открыть его экран.
+     */
+    private fun overlayRow(a: Activity, row: (String, String?, Boolean?, () -> Unit) -> Unit) {
+        if (Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(a)) return
+        val intent = listOf(
+            Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${a.packageName}")),
+            Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION),
+        ).firstOrNull { it.resolveActivity(a.packageManager) != null } ?: return
+        row(tr("Разрешить открываться поверх других приложений", "Allow opening over other apps"),
+            tr("нужно, чтобы видео с компьютера открывалось, когда Lumen Play в фоне",
+                "needed to open videos sent from a computer while Lumen Play is in the background"), null) {
+            runCatching { a.startActivity(intent) }
         }
     }
 }
