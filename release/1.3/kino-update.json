@@ -1,0 +1,20 @@
+{
+ "versionCode": 17,
+ "versionName": "1.3",
+ "apk": "https://github.com/kmuradoff/kino-player/releases/download/v1.3/lumen-play-1.3-arm64-v8a.apk",
+ "size": 35788919,
+ "sha256": "7c1e73302d193b39b78c1bdf8dfb632d926a0b0fe96d6f0a426193549c9720e3",
+ "notes": "Lumen Play 1.3:\n- Видео из браузера на компьютере: новое расширение для Chrome, Edge, Яндекс Браузера, Brave и Firefox отправляет видео со страницы прямо в Lumen Play на проекторе, с того же места, где вы остановились. Проектор подключается один раз по коду на экране. Видео с защитой от копирования расширение не отправляет.\n- Список устройств, которым разрешено отправлять видео, есть в настройках, любое можно удалить.\n- Приём видео работает и после того, как Lumen Play обновился сам, открывать приложение не нужно.\n- Потоковое видео HLS и DASH (ссылки .m3u8 и .mpd) играет без вылетов, в панели появился выбор качества.\n- Если поток не открывается во встроенном плеере, Lumen Play пробует VLC, а не закрывается.",
+ "apks": {
+  "arm64-v8a": {
+   "apk": "https://github.com/kmuradoff/kino-player/releases/download/v1.3/lumen-play-1.3-arm64-v8a.apk",
+   "size": 35788919,
+   "sha256": "7c1e73302d193b39b78c1bdf8dfb632d926a0b0fe96d6f0a426193549c9720e3"
+  },
+  "armeabi-v7a": {
+   "apk": "https://github.com/kmuradoff/kino-player/releases/download/v1.3/lumen-play-1.3-armeabi-v7a.apk",
+   "size": 33312537,
+   "sha256": "4cbeb5e9b1f16616419ef10159a951bc917e895e253f0721bfcbd674fbadb3d2"
+  }
+ }
+}
