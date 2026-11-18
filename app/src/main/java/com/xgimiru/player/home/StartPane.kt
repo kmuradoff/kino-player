@@ -43,8 +43,11 @@ class StartPane(private val act: Activity, private val nav: Nav, private val his
     override fun onShow() = build()
 
     private fun build() {
+        val hadFocus = root.hasFocus()
+        if (hadFocus) root.post { focusFirst() }
         root.removeAllViews()
         first = null
+        lastFocus = null
         val cont = History.all(act).filter { !it.finished }
         for (e in cont) WatchNext.publish(act, e)
         val shown = if (historyOnly) emptySet() else cont.take(CARDS).map { it.key }.toSet()
@@ -114,7 +117,8 @@ class StartPane(private val act: Activity, private val nav: Nav, private val his
         Places.where(act, e.uri)?.let { w ->
             col.addView(LinearLayout(act).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-                addView(ImageView(act).apply { setImageDrawable(Ui.icon(act, if (e.uri.startsWith("file:")) R.drawable.ic_usb else R.drawable.ic_dns, Ui.T3)) },
+                val icon = when { !e.uri.startsWith("file:") -> R.drawable.ic_dns; "/storage/emulated/" in e.uri -> R.drawable.ic_hard_drive; else -> R.drawable.ic_usb }
+                addView(ImageView(act).apply { setImageDrawable(Ui.icon(act, icon, Ui.T3)) },
                     Ui.linear(p(22), p(22)).apply { rightMargin = p(8) })
                 addView(Ui.t(act, 20, 450, Ui.T3).apply { text = w })
             }, Ui.linear(-1, -2).apply { leftMargin = p(6); topMargin = p(12) })

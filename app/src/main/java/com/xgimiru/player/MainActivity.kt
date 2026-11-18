@@ -60,6 +60,7 @@ class MainActivity : Activity(), Nav {
     private val found = LinkedHashMap<String, String>()   // server link -> name, found on the network
     private var updateInfo: Updater.Info? = null
     private var updating = false
+    private var resumed = false
 
     private val mounts = object : BroadcastReceiver() {
         override fun onReceive(c: Context, i: Intent) {
@@ -288,7 +289,8 @@ class MainActivity : Activity(), Nav {
     override fun onResume() {
         super.onResume()
         refreshRail()
-        if (content.childCount > 0) panes[current]?.onShow()
+        if (resumed) panes[current]?.onShow()
+        resumed = true
         startDiscovery()
         // for a desk test: am start ... --es update_url http://127.0.0.1:PORT/kino-update.json
         val testUrl = intent.getStringExtra("update_url")

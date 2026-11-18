@@ -59,6 +59,8 @@ class FolderPane(private val act: Activity, private val nav: Nav, val source: So
     private val longOk = LinearLayout(act)
     private var built = false
     private var shownAt = -1
+    /** Focus was asked for before the list arrived: take it when it does. */
+    private var wantFocus = false
 
     override fun onShow() {
         if (!built) build()
@@ -66,7 +68,7 @@ class FolderPane(private val act: Activity, private val nav: Nav, val source: So
         statusLeft.text = source.status() ?: ""
     }
 
-    override fun onHide() = source.close()
+    override fun onHide() { wantFocus = false; source.close() }
 
     private fun build() {
         built = true
@@ -152,6 +154,7 @@ class FolderPane(private val act: Activity, private val nav: Nav, val source: So
             }
             message.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
             if (items.isNotEmpty()) list.setSelection(at.coerceAtLeast(0))
+            if (wantFocus && items.isNotEmpty()) { wantFocus = false; list.requestFocus() }
             shownAt = -1
             inspect(list.selectedItemPosition.coerceAtLeast(0))
             probeAll()
@@ -189,7 +192,7 @@ class FolderPane(private val act: Activity, private val nav: Nav, val source: So
     }
 
     override fun focusFirst(): Boolean {
-        if (items.isEmpty()) return false
+        if (items.isEmpty()) { wantFocus = true; return false }
         return list.requestFocus()
     }
 
