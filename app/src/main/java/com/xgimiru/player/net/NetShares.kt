@@ -40,29 +40,78 @@ object ShareUri {
 }
 
 /** A network folder the user added, or a server he logged in to from the list. */
-data class Share(val name: String, val uri: String, val user: String?, val pass: String?)
+data class Share(val name: String, val uri: String, val user: String?, val pass: String?) {
+    /** Never prints the password (logs, crash reports). */
+    override fun toString() = "Share(name=$name, uri=$uri, user=$user, pass=${if (pass.isNullOrEmpty()) "none" else "set"})"
+}
+
+/**
+ * Stored form of the share list: a JSON array of {n, u, user, p}, p = the password sealed by a [SecretBox].
+ * Builds up to 1.3 wrote the password in plain text under "pass": such entries are read once and the list is
+ * written again sealed ([Decoded.migrate]). Pure code, host tested.
+ */
+object ShareCodec {
+    class Decoded(val shares: List<Share>, val migrate: Boolean)
+
+    fun decode(raw: String?, box: SecretBox): Decoded {
+        val a = runCatching { JSONArray(raw ?: "[]") }.getOrDefault(JSONArray())
+        var plain = false
+        val list = (0 until a.length()).mapNotNull { a.optJSONObject(it) }.filter { it.has("u") }.map { o ->
+            val sealed = o.optString("p")
+            val legacy = o.optString("pass")
+            val pass = when {
+                sealed.isNotEmpty() -> box.open(sealed)     // null: the key is gone, the user types it again
+                legacy.isNotEmpty() -> { plain = true; legacy }
+                else -> null
+            }
+            Share(o.optString("n"), o.getString("u"), o.optString("user").ifEmpty { null }, pass)
+        }
+        return Decoded(list, plain)
+    }
+
+    /** Throws when the box cannot seal: the caller decides what to keep. */
+    fun encode(list: List<Share>, box: SecretBox): String {
+        val a = JSONArray()
+        for (s in list) {
+            val o = JSONObject().put("n", s.name).put("u", s.uri).put("user", s.user ?: "")
+            if (!s.pass.isNullOrEmpty()) o.put("p", box.seal(s.pass))
+            a.put(o)
+        }
+        return a.toString()
+    }
+}
 
 /**
  * Saved network folders and their logins. Links everywhere else are stored without a login; the player
- * puts it back right before opening ([authorize]).
+ * puts it back right before opening ([authorize]). Passwords are stored sealed with a key of the Android key
+ * store ([KeystoreBox]).
  */
 object NetShares {
     private const val PREFS = "shares"
+    private val box: SecretBox by lazy { KeystoreBox() }
+
+    private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     fun all(ctx: Context): List<Share> {
-        val raw = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("list", "[]")
-        val a = runCatching { JSONArray(raw) }.getOrDefault(JSONArray())
-        return (0 until a.length()).map { a.getJSONObject(it) }.map {
-            Share(it.optString("n"), it.getString("u"), it.optString("user").ifEmpty { null }, it.optString("pass").ifEmpty { null })
-        }
+        val d = ShareCodec.decode(prefs(ctx).getString("list", "[]"), box)
+        // first start after an update from a build that kept plain passwords: seal them now. If the key store
+        // fails, the old entries stay as they are and the next start tries again.
+        if (d.migrate) runCatching { prefs(ctx).edit().putString("list", ShareCodec.encode(d.shares, box)).commit() }
+        return d.shares
+    }
+
+    /** Seals the plain passwords of older builds (called once at the app start, off the main thread). */
+    fun migrate(ctx: Context) {
+        all(ctx)
     }
 
     fun saved(ctx: Context) = all(ctx).filter { it.name.isNotEmpty() }
 
     private fun write(ctx: Context, list: List<Share>) {
-        val a = JSONArray()
-        for (s in list) a.put(JSONObject().put("n", s.name).put("u", s.uri).put("user", s.user ?: "").put("pass", s.pass ?: ""))
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("list", a.toString()).apply()
+        // never a plain password on disk: without a working key store the login is kept without its password
+        val raw = runCatching { ShareCodec.encode(list, box) }
+            .getOrElse { ShareCodec.encode(list.map { it.copy(pass = null) }, box) }
+        prefs(ctx).edit().putString("list", raw).apply()
     }
 
     fun add(ctx: Context, s: Share) = write(ctx, all(ctx).filter { it.uri != s.uri } + s)
@@ -76,10 +125,13 @@ object NetShares {
         write(ctx, rest + Share("", "$server/", user, pass))
     }
 
-    fun login(ctx: Context, uri: String): Share? {
+    fun login(ctx: Context, uri: String): Share? = login(all(ctx), uri)
+
+    /** The longest saved prefix of [uri] with a login, else any login on that server. */
+    fun login(list: List<Share>, uri: String): Share? {
         val server = ShareUri.server(uri) ?: return null
-        val list = all(ctx).filter { ShareUri.server(it.uri) == server && it.user != null }
-        return list.filter { uri.startsWith(it.uri, true) }.maxByOrNull { it.uri.length } ?: list.firstOrNull()
+        val on = list.filter { ShareUri.server(it.uri) == server && it.user != null }
+        return on.filter { uri.startsWith(it.uri, true) }.maxByOrNull { it.uri.length } ?: on.firstOrNull()
     }
 
     fun authorize(ctx: Context, uri: Uri): Uri {

@@ -50,6 +50,8 @@ class MainActivity : Activity(), Host {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // network share passwords of older builds were stored in plain text: seal them with the key store key
+        Thread { runCatching { com.xgimiru.player.net.NetShares.migrate(applicationContext) } }.start()
         Ui.init(this)
         window.setBackgroundDrawable(Ui.field())
         val d = { v: Number -> Ui.dp(this, v) }
