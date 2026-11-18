@@ -47,7 +47,7 @@ object SendSettings {
 
     /** Asks, then removes the browser; [done] redraws the page. */
     fun confirmRemove(a: Activity, d: Device, done: () -> Unit) {
-        AlertDialog.Builder(a, R.style.Lumen_Dialog)
+        AlertDialog.Builder(a, com.xgimiru.player.ui.Ui.dialogTheme())
             .setTitle(tr("Убрать «${d.client}»?", "Remove \"${d.client}\"?"))
             .setMessage(tr("Отправлять видео с этого браузера можно будет только после нового кода.",
                 "This browser will need a new code to send videos again."))
@@ -58,7 +58,7 @@ object SendSettings {
 
     /** No browser yet: how to add one. */
     fun explain(a: Activity) {
-        AlertDialog.Builder(a, R.style.Lumen_Dialog)
+        AlertDialog.Builder(a, com.xgimiru.player.ui.Ui.dialogTheme())
             .setTitle(tr("Отправка из браузера", "Send from a browser"))
             .setMessage(tr("Пока никого. Нажмите в браузере на компьютере кнопку расширения «Отправить на Lumen Play» " +
                 "и введите код, который появится на экране.",

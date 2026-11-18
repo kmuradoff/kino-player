@@ -10,7 +10,7 @@ class PlayerSettingsTest {
 
     @Test fun defaultsWhenNothingStored() {
         val s = Settings(MapStore())
-        assertEquals("auto", s.string(K.ENGINE))
+        assertEquals("dark", s.string(K.THEME))
         assertEquals("auto", s.string(K.DECODER))
         assertFalse(s.bool(K.TUNNELING))
         assertTrue(s.bool(K.PASSTHROUGH))
@@ -116,5 +116,26 @@ class PlayerSettingsTest {
 
     @Test fun frameRateHookIsOffByDefault() {
         assertFalse(FrameRateHook.active())
+    }
+
+    @Test fun noEngineChoiceAndNoLibVlcOnlyRows() {
+        val keys = K.ALL.map { it.key }
+        assertFalse("engine" in keys)
+        assertFalse("deinterlace" in keys)
+    }
+
+    @Test fun anOldStoredEngineChoiceIsIgnored() {
+        // a 1.3 user who picked "Always VLC" keeps every other setting, the engine key no longer exists
+        val s = Settings(MapStore(hashMapOf("engine" to "vlc", "seekStep" to "30")))
+        assertEquals(30_000L, s.seekStepMs)
+        assertTrue(K.ALL.none { it.key == "engine" })
+    }
+
+    @Test fun themeIsDarkUntilTheUserPicksLight() {
+        val store = MapStore()
+        assertEquals("dark", Settings(store).string(K.THEME))
+        Settings(store).set(K.THEME, "light")
+        assertEquals("light", Settings(store).string(K.THEME))
+        assertEquals("dark", Settings(MapStore(hashMapOf("theme" to "sepia"))).string(K.THEME))
     }
 }

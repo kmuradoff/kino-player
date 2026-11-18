@@ -40,7 +40,8 @@ class Stepper(key: String, section: Section, ru: String, en: String, val min: In
 
 /**
  * Every player setting, Kodi style (Videos > Playback, Subtitles, Audio, Player > Videos), limited to what
- * Media3 and libVLC can really do. Keys of Lumen Play 1.3 (tunneling, doviHdr, scaleMode) stay the same so a
+ * Media3 can really do: Media3 is always the engine, so there is no engine choice and no libVLC-only row
+ * (deinterlacing: the hardware decoder does it, the libVLC fallback deinterlaces by itself). Keys of Lumen Play 1.3 (tunneling, doviHdr, scaleMode) stay the same so a
  * user keeps his choice.
  */
 object K {
@@ -58,9 +59,6 @@ object K {
     private fun ptOn(s: Settings) = s.bool(PASSTHROUGH)
 
     // ── Video ──
-    val ENGINE = Choice("engine", V, "Движок", "Engine", listOf(
-        Option("auto", "Авто: Media3, при ошибке VLC", "Auto: Media3, VLC on error"),
-        Option("vlc", "Всегда VLC", "Always VLC")), "auto")
     val DECODER = Choice("decoder", V, "Декодер видео", "Video decoder", listOf(
         Option("auto", "Аппаратный, при ошибке программный", "Hardware, software on error"),
         Option("hw", "Только аппаратный", "Hardware only"),
@@ -75,9 +73,6 @@ object K {
     val ASPECT = Choice("aspect", V, "Соотношение сторон", "Aspect ratio", listOf(
         Option("auto", "Как в файле", "From the file"), Option("16:9", "16:9"), Option("4:3", "4:3"),
         Option("21:9", "21:9"), Option("1.85", "1,85:1", "1.85:1"), Option("2.35", "2,35:1", "2.35:1")), "auto")
-    val DEINTERLACE = Choice("deinterlace", V, "Деинтерлейсинг", "Deinterlacing", listOf(
-        Option("auto", "Авто", "Auto"), Option("off", "Выключен", "Off"), Option("blend", "Смешивание", "Blend"),
-        Option("bob", "Bob"), Option("yadif", "Yadif"), Option("yadif2x", "Yadif 2x")), "auto")
     val RESUME = Choice("resume", V, "Продолжать с места остановки", "Resume where you stopped", listOf(
         Option("resume", "Да", "Yes"), Option("ask", "Спрашивать", "Ask"), Option("start", "Нет, с начала", "No, from the start")), "resume")
     val SEEK_STEP = Choice("seekStep", V, "Шаг перемотки", "Seek step", listOf(
@@ -153,15 +148,18 @@ object K {
     val CLOCK = Toggle("osdClock", I, "Часы и время окончания", "Clock and end time", true)
     val KEY_OK = Choice("keyOk", I, "Кнопка OK", "OK button", listOf(
         Option("pause", "Пауза и продолжение", "Pause and play"), Option("menu", "Открыть меню", "Open the menu")), "pause")
+    /** Dark by default: films are watched in the dark, and the player must not look like the light Home. */
+    val THEME = Choice("theme", I, "Тема", "Theme", listOf(
+        Option("dark", "Тёмная", "Dark"), Option("light", "Светлая", "Light")), "dark")
     val KEY_UPDOWN = Choice("keyUpDown", I, "Кнопки вверх и вниз", "Up and Down buttons", listOf(
         Option("menu", "Вниз: меню, вверх: панель", "Down: menu, Up: bar"),
         Option("seek", "Большой шаг перемотки", "Big seek step")), "menu")
 
     val ALL: List<Setting> = listOf(
-        ENGINE, DECODER, TUNNELING, DV5, SCALE, ASPECT, DEINTERLACE, RESUME, SEEK_STEP, SEEK_ACCEL, BIG_STEP, SPEED, AUTO_NEXT,
+        DECODER, TUNNELING, DV5, SCALE, ASPECT, RESUME, SEEK_STEP, SEEK_ACCEL, BIG_STEP, SPEED, AUTO_NEXT,
         AUDIO_LANG, PASSTHROUGH, PT_AC3, PT_EAC3, PT_ATMOS, PT_TRUEHD, PT_DTS, PT_DTSHD, DOWNMIX, AUDIO_DELAY, BOOST, NIGHT,
         SUB_LANG, SUB_LANG2, SUB_AUTO, SUB_ENCODING, SUB_SIZE, SUB_COLOR, SUB_BACK, SUB_EDGE, SUB_BOLD, SUB_POSITION, SUB_DELAY, SUB_STYLES,
-        OSD_TIMEOUT, INFO, CLOCK, KEY_OK, KEY_UPDOWN,
+        THEME, OSD_TIMEOUT, INFO, CLOCK, KEY_OK, KEY_UPDOWN,
     )
 
     fun of(section: Section) = ALL.filter { it.section == section }
@@ -176,6 +174,9 @@ class Settings(private val store: Store) {
     fun set(c: Choice, v: String) { require(c.options.any { it.value == v }) { "$v is not an option of ${c.key}" }; store.put(c.key, v) }
     fun set(t: Toggle, v: Boolean) = store.put(t.key, v.toString())
     fun set(s: Stepper, v: Int) = store.put(s.key, s.clamp(v).toString())
+
+    /** The stored text of a setting, null when nothing is stored. */
+    fun raw(x: Setting): String? = store.get(x.key)
 
     fun visible(x: Setting) = x.shownIf?.invoke(this) ?: true
     fun reset() = K.ALL.forEach { store.put(it.key, null) }

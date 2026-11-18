@@ -31,9 +31,9 @@ class ProgressView @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
     var scrub: Long? = null
 
     private val dp = resources.displayMetrics.density
-    private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(46, 255, 255, 255) }
+    private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(71, 255, 255, 255) }
     private val loaded = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(80, 255, 255, 255) }
-    private val played = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val played = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF3B78E7.toInt() }
     private val knob = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; setShadowLayer(8 * dp, 0f, 0f, 0x66000000) }
     private val bubble = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
     private val bubbleText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -50,12 +50,8 @@ class ProgressView @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
         invalidate()
     }
 
-    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        played.shader = LinearGradient(0f, 0f, w.toFloat(), 0f, ACCENT, ACCENT_WARM, Shader.TileMode.CLAMP)
-    }
-
     override fun onDraw(c: Canvas) {
-        val barH = if (scrub != null) 8 * dp else 6 * dp
+        val barH = if (scrub != null) 5 * dp else 4 * dp
         val left = 0f
         val right = width.toFloat()
         val cy = height - 12 * dp
@@ -82,7 +78,7 @@ class ProgressView @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
             c.drawPath(path, bubble)
             c.drawText(label, bx, top + 21 * dp, bubbleText)
         } else if (duration > 0) {
-            c.drawCircle(x(position), cy, 7 * dp, knob)
+            c.drawCircle(x(position), cy, 6 * dp, knob)
         }
     }
 }

@@ -31,8 +31,8 @@ import android.app.AlertDialog
 import android.graphics.drawable.GradientDrawable
 
 /**
- * Плеер Lumen Play. Интерфейс свой, движков два (см. [Engine]): Media3 для современных форматов и
- * Dolby Vision, VLC для старья, сетевых папок и как запасной. Понимает параметры, которые другие
+ * Плеер Lumen Play. Играет всегда Media3; libVLC только там, где Media3 не может (см. [EngineRules]):
+ * папки NFS, FTP, SFTP и файлы, формат которых Media3 не поддерживает. Понимает параметры, которые другие
  * приложения передают внешним плеерам (MX Player, VLC), и возвращает, где остановились.
  * Поведение задают настройки плеера ([K]): перемотка, кнопки, продолжение, звук, субтитры.
  */
@@ -65,8 +65,9 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
     private lateinit var nextProgress: ProgressView
     private lateinit var error: View
     private lateinit var errorText: TextView
-    private lateinit var panel: View
-    private lateinit var panelList: LinearLayout
+    private lateinit var sheet: com.xgimiru.player.ui.PlayerSheet
+    private lateinit var top: View
+    private lateinit var endText: TextView
 
     private val handler = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
@@ -96,6 +97,8 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
     private var loading = false
     private var loadingPct = -1
     private var fellBack = false        // уже переключались на запасной движок для этого файла
+    /** Движок текущего файла и почему (см. [EngineRules]). */
+    private var plan = EngineRules.Plan(EngineRules.Kind.MEDIA3, EngineRules.Why.NONE)
     private var torrentStat: TorrServe.Stat? = null
     private var ownTorrents = false     // в списке есть видео со встроенного TorrServer (история Lumen Play 1.3)
     private var engineRestarted = false // перезапускали встроенный движок после сбоя этого файла
@@ -111,6 +114,7 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         cfg = playerSettings()
+        com.xgimiru.player.ui.Ui.init(this)
         audioDelay = cfg.int(K.AUDIO_DELAY)
         subDelay = cfg.int(K.SUB_DELAY)
         setContentView(R.layout.activity_player)
@@ -134,7 +138,7 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         stoppedAt?.let { pos ->
             stoppedAt = null
             if (items.isNotEmpty() && engine == null) {
-                play(index, pos, forceVlc = engineIsVlc)
+                play(index, pos, keep())
                 engine?.pause()
                 paused = true
                 showControls(0)
@@ -200,10 +204,15 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         nextProgress = findViewById(R.id.nextProgress)
         error = findViewById(R.id.error)
         errorText = findViewById(R.id.errorText)
-        panel = findViewById(R.id.panel)
-        panelList = findViewById(R.id.panelList)
+        top = findViewById(R.id.top)
+        endText = findViewById(R.id.endTime)
+        for (t in listOf(positionText, remainingText, endText)) {
+            t.typeface = com.xgimiru.player.ui.Ui.sans(); com.xgimiru.player.ui.Ui.weight(t, 500, 24); t.fontFeatureSettings = "tnum"
+        }
+        sheet = com.xgimiru.player.ui.PlayerSheet(this)
+        (findViewById<View>(R.id.root) as android.widget.FrameLayout).addView(sheet, android.widget.FrameLayout.LayoutParams(-1, -1))
         net.visibility = View.GONE
-        findViewById<TextView>(R.id.hint).text = tr("Вниз: звук, субтитры, экран", "Down: audio, subtitles, picture")
+        findViewById<TextView>(R.id.hint).text = tr("Вниз: субтитры, звук, картинка", "Down: subtitles, sound, picture")
     }
 
     private fun prefs() = getSharedPreferences("player", MODE_PRIVATE)
@@ -296,12 +305,15 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         }
     }
 
-    /** Запуск серии [i]. [forceVlc] — запасной движок после сбоя Media3. */
-    private fun play(i: Int, startMs: Long, forceVlc: Boolean = false) {
+    /** The current engine when it is libVLC (a fallback or a share), to keep it on a retry. */
+    private fun keep(): EngineRules.Plan? = plan.takeIf { engineIsVlc }
+
+    /** Запуск серии [i]. [forced] — движок задан (запасной после сбоя Media3), null — решают [EngineRules]. */
+    private fun play(i: Int, startMs: Long, forced: EngineRules.Plan? = null) {
         index = i
         startFrom = startMs
         if (TorrEngine.isOwn(items[i].uri) && !(TorrEngine.isRunning && items[i].uri.port == TorrEngine.port)) {
-            startTorrEngine(i, startMs, forceVlc)
+            startTorrEngine(i, startMs, forced)
             return
         }
         val item = items[i]
@@ -311,12 +323,14 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         handler.removeCallbacks(loadChapters)
         if (i + 1 < items.size && cfg.bool(K.AUTO_NEXT)) handler.postDelayed(loadChapters, 5000)   // когда фильм уже пошёл
         paused = false
-        if (!forceVlc) fellBack = false
+        if (forced == null) fellBack = false
         error.visibility = View.GONE
         next.visibility = View.GONE
         badge.hide()
 
-        val wantVlc = forceVlc || cfg.string(K.ENGINE) == "vlc" || Engine.prefersVlc(item.uri)
+        val want = forced ?: EngineRules.first(item.uri.scheme)
+        val wantVlc = want.kind == EngineRules.Kind.VLC
+        plan = want
         if (engine == null || engineIsVlc != wantVlc) {
             engine?.release()
             engine = if (wantVlc) VlcEngine(this, video, this, cfg) else ExoEngine(this, video, this, cfg)
@@ -330,7 +344,7 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         e.setSubtitleEncoding(subs.charset)
         e.setAudioDelay(audioDelay)
         e.setSubtitleDelay(subDelay)
-        e.open(NetShares.authorize(this, item.uri), startMs, subs.subs)
+        e.open(NetShares.authorize(this, item.uri), startMs, subs.subs.map { NetShares.authorize(this, it) })
         if (cfg.string(K.SPEED) == "last") prefs().getFloat("lastSpeed", 1f).takeIf { it != 1f }?.let { e.speed = it }
 
         showTitles()
@@ -342,7 +356,7 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
      * Встроенный движок не запущен (остановился, пока фильм стоял в фоне) или порт в ссылке от
      * прошлого запуска: запустить движок, подставить порт во все его ссылки и играть.
      */
-    private fun startTorrEngine(i: Int, startMs: Long, forceVlc: Boolean) {
+    private fun startTorrEngine(i: Int, startMs: Long, forced: EngineRules.Plan?) {
         error.visibility = View.GONE
         showTitles()
         onBuffering(true, -1)
@@ -353,7 +367,7 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
                 r.onSuccess {
                     fun fix(u: Uri) = if (TorrEngine.isOwn(u)) TorrEngine.rebase(u) else u
                     items = items.map { it.copy(uri = fix(it.uri), subs = it.subs.map(::fix)) }
-                    play(i, startMs, forceVlc)
+                    play(i, startMs, forced)
                 }.onFailure {
                     onBuffering(false, 100)
                     errorText.text = tr("TorrServer не запустился: ", "TorrServer did not start: ") + it.message
@@ -430,16 +444,16 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         else { completed = true; finishWithResult() }
     }
 
-    override fun onError(message: String, fallback: Boolean) {
+    override fun onError(message: String, problem: EngineRules.Problem) {
         onBuffering(false, 100)
         val item = current()
         if (item != null && TorrEngine.isOwn(item.uri) && !TorrEngine.isRunning && !engineRestarted) {
             // встроенный движок остановился (простой в фоне, сбой): поднять и продолжить с того же места
             engineRestarted = true
-            play(index, engine?.position ?: 0L, forceVlc = engineIsVlc)
+            play(index, engine?.position ?: 0L, keep())
             return
         }
-        if (item != null && TorrServe.isTorrServe(item.uri) && !fallback) {
+        if (item != null && TorrServe.isTorrServe(item.uri) && problem != EngineRules.Problem.FORMAT) {
             // торрент не успел подгрузиться (мало сидов, медленная сеть): это не «формат не тот», а пауза
             // в данных. Ждём и продолжаем с того же места, до 5 раз на одну серию.
             if (torrRetryIndex != index) { torrRetryIndex = index; torrRetries = 0 }
@@ -447,7 +461,7 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
                 torrRetries++
                 val pos = engine?.position ?: 0L
                 onBuffering(true, 0)
-                handler.postDelayed({ if (!isFinishing) play(index, pos, forceVlc = engineIsVlc) }, 4000)
+                handler.postDelayed({ if (!isFinishing) play(index, pos, keep()) }, 4000)
                 return
             }
             errorText.text = tr("Торрент не успевает загружаться: у раздачи мало сидов или медленная сеть.",
@@ -455,12 +469,14 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
             error.visibility = View.VISIBLE
             return
         }
-        if (fallback && !engineIsVlc && !fellBack) {
-            // Media3 не справился с форматом — пробуем тот же файл на VLC с того же места.
+        val next = EngineRules.afterError(item?.uri?.scheme, problem, plan.kind, fellBack)
+        if (next != null) {
+            // Media3 cannot play this format or read this SMB server: the same file on libVLC from the same place
             fellBack = true
-            val pos = engine?.position ?: 0L
-            play(index, pos, forceVlc = true)
-            showToast(tr("Включил запасной движок", "Switched to the backup engine"), tr("этот файл лучше играет через VLC", "this file plays better with VLC"), 3500)
+            val pos = engine?.position?.takeIf { it > 0 } ?: startFrom
+            play(index, pos, next)
+            showToast(if (next.why == EngineRules.Why.SMB_READ) tr("Эту папку в сети читаю через VLC", "Reading this network folder with VLC")
+                else tr("Этот формат играю через VLC", "Playing this format with VLC"), "", 3500)
             return
         }
         errorText.text = if (item != null && TorrEngine.isOwn(item.uri) && !TorrEngine.isRunning)
@@ -488,9 +504,10 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         progress.update(dur, pos, e.buffered, scrubTarget)
         positionText.text = Time.format(shown)
         clock.visibility = if (cfg.bool(K.CLOCK)) View.VISIBLE else View.GONE
-        remainingText.text = if (dur > 0 && cfg.bool(K.CLOCK)) {
+        remainingText.text = if (dur > 0) "\u2212" + Time.format(dur - shown) else ""
+        endText.text = if (dur > 0 && cfg.bool(K.CLOCK)) {
             val left = ((dur - shown) / e.speed.coerceAtLeast(0.1f)).toLong()
-            "−${Time.format(dur - shown)}   ·   до ${clockFormat.format(Date(now.time + left))}"
+            tr("Закончится в ", "Ends at ") + clockFormat.format(Date(now.time + left))
         } else ""
         if (buffering.visibility == View.VISIBLE) updateBufferText()
 
@@ -736,9 +753,10 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
     // ── Пульт ────────────────────────────────────────────────────────────────
     override fun dispatchKeyEvent(e: KeyEvent): Boolean {
         if (panelOpen) {
-            val stepper = currentFocus?.tag == "stepper"
-            val close = e.keyCode == KeyEvent.KEYCODE_BACK || e.keyCode == KeyEvent.KEYCODE_MENU || (e.keyCode == KeyEvent.KEYCODE_DPAD_LEFT && !stepper)
-            if (close) { if (e.action == KeyEvent.ACTION_DOWN) closePanel(); return true }
+            if (e.keyCode == KeyEvent.KEYCODE_BACK || e.keyCode == KeyEvent.KEYCODE_MENU) {
+                if (e.action == KeyEvent.ACTION_DOWN && !sheet.stopEditing()) closePanel()
+                return true
+            }
             return super.dispatchKeyEvent(e)
         }
         if (e.keyCode !in HANDLED) return super.dispatchKeyEvent(e)
@@ -752,7 +770,7 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
             when (e.keyCode) {
                 KeyEvent.KEYCODE_BACK -> finishWithResult()
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER ->
-                    play(index, engine?.position?.takeIf { it > 0 } ?: startFrom, forceVlc = engineIsVlc)
+                    play(index, engine?.position?.takeIf { it > 0 } ?: startFrom, keep())
             }
             return true
         }
@@ -846,96 +864,135 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         if (index + 1 < items.size) play(index + 1, savedPosition(items[index + 1]) ?: 0)
     }
 
-    // ── Панель «звук · субтитры · скорость · экран» ─────────────────────────
+    // ── Panel: subtitles, sound, delays, picture ─────────────────────────────
     private fun openPanel() {
         buildPanel()
         panelOpen = true
-        panel.visibility = View.VISIBLE
-        panel.animate().translationX(0f).setDuration(260).setInterpolator(DecelerateInterpolator()).start()
+        next.visibility = View.GONE
         showControls(0)
-        handler.post { firstFocusable()?.requestFocus() }
+        top.visibility = View.INVISIBLE
+        sheet.open()
     }
 
     private fun closePanel() {
         panelOpen = false
-        panel.animate().translationX(panel.width.toFloat()).setDuration(220).withEndAction {
-            panel.visibility = View.INVISIBLE
-        }.start()
+        sheet.close { top.visibility = View.VISIBLE }
         scheduleHide()
     }
 
-    private fun firstFocusable(): View? {
-        val all = (0 until panelList.childCount).map { panelList.getChildAt(it) }
-        return all.firstOrNull { it.isFocusable && it.tag == "selected" } ?: all.firstOrNull { it.isFocusable }
+    /** Rebuild after a change, the focus stays on the same row. */
+    private fun rebuildPanel(delayMs: Long = 0) {
+        handler.postDelayed({
+            if (!panelOpen) return@postDelayed
+            val at = sheet.focusedAt()
+            buildPanel()
+            at?.let { sheet.focusAt(it.first, it.second) }
+            updateChips()
+        }, delayMs)
     }
 
     private fun buildPanel() {
         val eng = engine ?: return
-        panelList.removeAllViews()
+        val ru = tr("ru", "en") == "ru"
+        fun opt(label: String, sel: Boolean = false, icon: Int? = null, value: String? = null, step: ((Int) -> String)? = null, click: (() -> Unit)? = null) =
+            com.xgimiru.player.ui.PlayerSheet.Opt(label, sel, icon, value, step, click)
 
+        val text = eng.textTracks()
+        val subs = ArrayList<com.xgimiru.player.ui.PlayerSheet.Opt>()
+        subs += opt(tr("Выключены", "Off"), text.none { it.selected }) { eng.selectText(null); rebuildPanel(200) }
+        for (t in text) subs += opt(t.label, t.selected) { eng.selectText(t.id); rebuildPanel(200) }
+        if (current()?.uri?.scheme == "file") subs += opt(tr("Загрузить из файла", "Load from a file")) { pickSubtitles() }
+
+        val audio = eng.audioTracks().map { t -> opt(t.label, t.selected) { eng.selectAudio(t.id); rebuildPanel(200) } }
+            .ifEmpty { listOf(opt(tr("Одна дорожка", "One track"), true)) }
+
+        val delays = listOf(
+            opt(tr("Звук", "Sound"), icon = R.drawable.ic_graphic_eq, value = Settings.stepLabel(K.AUDIO_DELAY, audioDelay, ru), step = { d ->
+                audioDelay = K.AUDIO_DELAY.clamp(audioDelay + d * K.AUDIO_DELAY.step)
+                engine?.setAudioDelay(audioDelay)
+                Settings.stepLabel(K.AUDIO_DELAY, audioDelay, ru)
+            }),
+            opt(tr("Субтитры", "Subtitles"), icon = R.drawable.ic_subtitles, value = Settings.stepLabel(K.SUB_DELAY, subDelay, ru), step = { d ->
+                setSubDelay(K.SUB_DELAY.clamp(subDelay + d * K.SUB_DELAY.step))
+                Settings.stepLabel(K.SUB_DELAY, subDelay, ru)
+            }),
+        )
+
+        val pic = ArrayList<com.xgimiru.player.ui.PlayerSheet.Opt>()
         val quality = eng.videoTracks()
         if (quality.isNotEmpty()) {
-            header(tr("Качество", "Quality"))
-            row(tr("Авто", "Auto"), quality.none { it.selected }) { eng.selectVideo(null) }
-            for (t in quality) row(t.label, t.selected) { eng.selectVideo(t.id) }
-        }
-
-        header(tr("Звук", "Audio"))
-        val audio = eng.audioTracks()
-        if (audio.isEmpty()) note(tr("Одна дорожка", "One track"))
-        for (t in audio) row(t.label, t.selected) { eng.selectAudio(t.id) }
-        stepper(K.AUDIO_DELAY, { audioDelay }) { audioDelay = it; engine?.setAudioDelay(it) }
-
-        header(tr("Субтитры", "Subtitles"))
-        val text = eng.textTracks()
-        row(tr("Выключены", "Off"), text.none { it.selected }) { eng.selectText(null) }
-        for (t in text) row(t.label, t.selected) { eng.selectText(t.id) }
-        if (text.isNotEmpty()) stepper(K.SUB_DELAY, { subDelay }) { setSubDelay(it) }
-
-        header(tr("Скорость", "Speed"))
-        for (s in listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)) {
-            val label = if (s == 1f) tr("Обычная", "Normal") else "×" + s.toString().removeSuffix(".0").let { if (tr("ru", "en") == "ru") it.replace('.', ',') else it }
-            row(label, kotlin.math.abs(eng.speed - s) < 0.01f) {
-                eng.speed = s
-                prefs().edit().putFloat("lastSpeed", s).apply()
+            val cur = quality.indexOfFirst { it.selected }
+            pic += opt(tr("Качество", "Quality"), icon = R.drawable.ic_movie_info, value = quality.getOrNull(cur)?.label ?: tr("Авто", "Auto")) {
+                val n = cur + 1
+                eng.selectVideo(quality.getOrNull(n)?.id)
+                rebuildPanel(200)
             }
         }
-
-        header(tr("Масштаб", "Zoom"))
-        val ru = tr("ru", "en") == "ru"
-        for (o in K.SCALE.options) row(if (ru) o.ru else o.en, cfg.string(K.SCALE) == o.value) {
-            eng.setScale(o.value.toInt())
-            cfg.set(K.SCALE, o.value)
+        pic += opt(tr("Масштаб", "Zoom"), icon = R.drawable.ic_aspect_ratio, value = cfg.label(K.SCALE, ru)) {
+            val o = K.SCALE.options; val v = o[(o.indexOfFirst { it.value == cfg.string(K.SCALE) } + 1) % o.size].value
+            cfg.set(K.SCALE, v); eng.setScale(v.toInt()); rebuildPanel()
         }
-        header(tr("Соотношение сторон", "Aspect ratio"))
-        for (o in K.ASPECT.options) row(if (ru) o.ru else o.en, cfg.string(K.ASPECT) == o.value) {
-            eng.setAspect(o.value)
-            cfg.set(K.ASPECT, o.value)
+        pic += opt(tr("Соотношение сторон", "Aspect ratio"), icon = R.drawable.ic_crop_free, value = cfg.label(K.ASPECT, ru)) {
+            val o = K.ASPECT.options; val v = o[(o.indexOfFirst { it.value == cfg.string(K.ASPECT) } + 1) % o.size].value
+            cfg.set(K.ASPECT, v); eng.setAspect(v); rebuildPanel()
         }
-
+        pic += opt(tr("Скорость", "Speed"), icon = R.drawable.ic_speed, value = speedLabel(eng.speed)) {
+            val all = SPEEDS; val i = all.indexOfFirst { kotlin.math.abs(it - eng.speed) < 0.01f }
+            eng.speed = all[(i + 1) % all.size]
+            prefs().edit().putFloat("lastSpeed", eng.speed).apply()
+            rebuildPanel()
+        }
         val exo = eng as? ExoEngine
-        if (exo != null && exo.isDovi) {
-            header("Dolby Vision 5")
-            for ((hdr, label) in listOf(false to tr("SDR, свой тон-маппинг", "SDR, own tone mapping"), true to tr("HDR10 на проектор", "HDR10 to the display"))) {
-                row(label, exo.doviHdr == hdr) {
-                    exo.doviHdr = hdr
-                    // режим вывода задаётся при создании слоя — пересоздаём движок с того же места
-                    val pos = eng.position
-                    engine?.release(); engine = null
-                    closePanel()
-                    play(index, pos)
-                }
-            }
+        if (exo != null && exo.isDovi) pic += opt("Dolby Vision", icon = R.drawable.ic_movie_info,
+                value = if (exo.doviHdr) "HDR10" else tr("SDR", "SDR")) {
+            exo.doviHdr = !exo.doviHdr
+            // the output mode is set when the layer is made: open the film again from the same place
+            val pos = eng.position
+            engine?.release(); engine = null
+            closePanel()
+            play(index, pos)
+        }
+        pic += opt(tr("Сведения о видео", "Video details"), icon = R.drawable.ic_info, value = cfg.label(K.INFO, ru)) {
+            cfg.set(K.INFO, !cfg.bool(K.INFO)); rebuildPanel()
         }
 
-        action(tr("Все настройки плеера", "All player settings")) {
-            closePanel()
-            startActivity(Intent(this, SettingsActivity::class.java))
-        }
-        note(if (engineIsVlc) tr("Движок: VLC", "Engine: VLC") else tr("Движок: Media3", "Engine: Media3"))
+        val base = intent.getStringExtra("title")
+        val title = if (items.size > 1 && base != null) base else current()?.title ?: ""
+        val engineName = if (engineIsVlc) tr("Движок VLC", "VLC engine") else tr("Движок Media3", "Media3 engine")
+        sheet.set(title, eng.badges(), engineName, listOf(
+            com.xgimiru.player.ui.PlayerSheet.Column(tr("Субтитры", "Subtitles"), subs),
+            com.xgimiru.player.ui.PlayerSheet.Column(tr("Звук", "Sound"), audio),
+            com.xgimiru.player.ui.PlayerSheet.Column(tr("Задержка", "Delay"), delays),
+            com.xgimiru.player.ui.PlayerSheet.Column(tr("Картинка", "Picture"), pic),
+        ))
     }
 
-    /** Задержка субтитров в панели. Media3 сдвигает внешние файлы при открытии, поэтому при минусе открываем заново. */
+    private fun speedLabel(s: Float): String {
+        val t = s.toString().removeSuffix(".0")
+        return (if (tr("ru", "en") == "ru") t.replace('.', ',') else t) + "\u00D7"
+    }
+
+    /** Subtitle files of the video's folder (and its Subs folder): the picked one goes first and is shown. */
+    private fun pickSubtitles() {
+        val item = current() ?: return
+        val dir = java.io.File(item.uri.path ?: return).parentFile ?: return
+        val exts = setOf("srt", "ass", "ssa", "vtt", "sub", "smi")
+        val files = (dir.listFiles().orEmpty().toList() + dir.listFiles().orEmpty().filter { it.isDirectory && it.name.lowercase() in setOf("subs", "sub", "subtitles", "субтитры") }
+            .flatMap { it.listFiles().orEmpty().toList() }).filter { it.isFile && it.extension.lowercase() in exts }
+        if (files.isEmpty()) { showToast(tr("Рядом с видео нет файлов субтитров", "No subtitle files next to the video"), "", 3000); return }
+        AlertDialog.Builder(this, R.style.Lumen_Dialog)
+            .setTitle(tr("Субтитры из файла", "Subtitles from a file"))
+            .setItems(files.map { it.relativeTo(dir).path }.toTypedArray()) { _, i ->
+                val uri = Uri.fromFile(files[i])
+                items = items.toMutableList().also { it[index] = item.copy(subs = listOf(uri) + item.subs.filter { s -> s != uri }) }
+                val pos = engine?.position ?: 0L
+                closePanel()
+                play(index, pos, keep())
+            }
+            .show()
+    }
+
+    /** Задержка субтитров. Media3 сдвигает внешние файлы при открытии, поэтому при минусе открываем заново. */
     private fun setSubDelay(v: Int) {
         val before = subDelay
         subDelay = v
@@ -950,96 +1007,8 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
     private val reopen = Runnable {
         val pos = engine?.position ?: return@Runnable
         val wasPaused = paused
-        play(index, pos)
+        play(index, pos, keep())
         if (wasPaused) { engine?.pause(); paused = true }
-    }
-
-    private fun header(text: String) {
-        panelList.addView(TextView(this).apply {
-            this.text = text.uppercase()
-            textSize = 13f
-            letterSpacing = 0.14f
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setTextColor(getColor(R.color.accent_warm))
-            setPadding(dp(16), dp(if (panelList.childCount == 0) 0 else 22), dp(16), dp(8))
-        })
-    }
-
-    private fun note(text: String) {
-        panelList.addView(TextView(this).apply {
-            this.text = text
-            textSize = 15f
-            setTextColor(getColor(R.color.text_faint))
-            setPadding(dp(16), dp(10), dp(16), dp(8))
-        })
-    }
-
-    /** Отметка выбранного: точка, нарисованная фигурой (не символ). */
-    private fun dot(selected: Boolean) = GradientDrawable().apply {
-        shape = GradientDrawable.OVAL
-        setSize(dp(10), dp(10))
-        if (selected) setColor(Color.WHITE) else setColor(Color.TRANSPARENT)
-    }
-
-    /** Цвет строки панели: тёмный на светлой подложке фокуса, иначе светлый. */
-    private fun ink(normal: Int) = android.content.res.ColorStateList(
-        arrayOf(intArrayOf(android.R.attr.state_focused), intArrayOf()), intArrayOf(0xFF0E1014.toInt(), normal))
-
-    private fun item(text: String, selected: Boolean): TextView = TextView(this).apply {
-        this.text = text
-        tag = if (selected) "selected" else null
-        textSize = 19f
-        setTextColor(ink(if (selected) Color.WHITE else getColor(R.color.text_dim)))
-        compoundDrawableTintList = ink(Color.WHITE)
-        typeface = if (selected) Typeface.create("sans-serif-medium", Typeface.NORMAL) else Typeface.DEFAULT
-        background = getDrawable(R.drawable.item_bg)
-        setPadding(dp(16), dp(13), dp(16), dp(13))
-        gravity = Gravity.CENTER_VERTICAL
-        compoundDrawablePadding = dp(14)
-        setCompoundDrawablesRelative(dot(selected), null, null, null)
-        isFocusable = true
-        isClickable = true
-    }
-
-    private fun row(text: String, selected: Boolean, onClick: () -> Unit) {
-        panelList.addView(item(text, selected).apply {
-            setOnClickListener {
-                onClick()
-                handler.postDelayed({
-                    val idx = panelList.indexOfChild(this)
-                    buildPanel()
-                    panelList.getChildAt(idx)?.requestFocus()
-                    updateChips()
-                }, 200)
-            }
-        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
-    }
-
-    private fun action(text: String, onClick: () -> Unit) {
-        panelList.addView(item(text, false).apply {
-            setCompoundDrawablesRelative(null, null, null, null)
-            setTextColor(ink(Color.WHITE))
-            setOnClickListener { onClick() }
-        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
-    }
-
-    /** Число, которое меняют кнопки влево и вправо (задержки). Только на этот сеанс. */
-    private fun stepper(s: Stepper, get: () -> Int, set: (Int) -> Unit) {
-        val ru = tr("ru", "en") == "ru"
-        val v = item("", false)
-        fun paint() { v.text = (if (ru) s.ru else s.en) + "   " + Settings.stepLabel(s, get(), ru) }
-        paint()
-        v.tag = "stepper"
-        val l = getDrawable(R.drawable.ic_chevron_left)!!.mutate().apply { setBounds(0, 0, dp(20), dp(20)) }
-        val r = getDrawable(R.drawable.ic_chevron_right)!!.mutate().apply { setBounds(0, 0, dp(20), dp(20)) }
-        v.setCompoundDrawablesRelative(l, null, r, null)
-        v.setOnKeyListener { _, code, ev ->
-            val dir = when (code) { KeyEvent.KEYCODE_DPAD_LEFT -> -1; KeyEvent.KEYCODE_DPAD_RIGHT -> 1; else -> 0 }
-            if (dir == 0) return@setOnKeyListener false
-            if (ev.action == KeyEvent.ACTION_DOWN) { set(s.clamp(get() + dir * s.step)); paint() }
-            true
-        }
-        panelList.addView(v, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
     }
 
     // ── Сохранение и выход ───────────────────────────────────────────────────
@@ -1063,6 +1032,7 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
             if (list != null && next != null && History.get(this, History.key(next.uri)) == null)
                 History.save(this, History.Entry(History.key(next.uri), next.uri.toString(), next.title, 0, 0, lastSave, list))
             History.remove(this, entry.key)
+            History.markWatched(this, entry)
         } else if (pos > 15_000) {
             History.save(this, entry)
             // кадр из видео — обложка в «Продолжить просмотр» лаунчера
@@ -1086,6 +1056,7 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
     companion object {
         private const val HOLD = "player"
         private const val CREDITS_COUNTDOWN_MS = 10_000L
+        private val SPEEDS = floatArrayOf(1f, 1.25f, 1.5f, 2f, 0.5f, 0.75f)
         private val SCRUB_KEYS = setOf(
             KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT,
             KeyEvent.KEYCODE_MEDIA_REWIND, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD,

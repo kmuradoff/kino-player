@@ -16,6 +16,7 @@ object History {
 
     private const val PREFS = "history"
     private const val KEY = "items"
+    private const val WATCHED = "watched"
     private const val LIMIT = 40
 
     /**
@@ -30,13 +31,7 @@ object History {
     }
 
     fun all(ctx: Context): List<Entry> {
-        val raw = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, "[]")
-        val arr = runCatching { JSONArray(raw) }.getOrDefault(JSONArray())
-        return (0 until arr.length()).map { i ->
-            val o = arr.getJSONObject(i)
-            Entry(o.getString("k"), o.getString("u"), o.optString("t"), o.optLong("p"), o.optLong("d"), o.optLong("w"),
-                o.optString("l").ifEmpty { null })
-        }
+        return read(ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, "[]"))
     }
 
     fun get(ctx: Context, key: String) = all(ctx).firstOrNull { it.key == key }
@@ -49,6 +44,38 @@ object History {
     fun remove(ctx: Context, key: String) {
         write(ctx, all(ctx).filter { it.key != key })
         WatchNext.remove(ctx, key)
+    }
+
+    /** Films and episodes watched to the end: "Недавно смотрели" and the check mark in the folder list. */
+    fun markWatched(ctx: Context, e: Entry) {
+        val done = e.copy(position = e.duration, playlist = null)
+        writeWatched(ctx, (listOf(done) + watched(ctx).filter { it.key != e.key }).take(LIMIT))
+    }
+
+    fun watched(ctx: Context): List<Entry> = read(ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(WATCHED, "[]"))
+
+    /** Started and watched, newest first, one entry per video. */
+    fun recent(ctx: Context): List<Entry> = (all(ctx) + watched(ctx)).sortedByDescending { it.updated }.distinctBy { it.key }
+
+    /** Long OK in a folder: from the start, and gone from Continue and from the watched list. */
+    fun forget(ctx: Context, key: String) {
+        remove(ctx, key)
+        writeWatched(ctx, watched(ctx).filter { it.key != key })
+    }
+
+    private fun writeWatched(ctx: Context, list: List<Entry>) {
+        val arr = JSONArray()
+        for (x in list) arr.put(JSONObject().put("k", x.key).put("u", x.uri).put("t", x.title).put("p", x.position).put("d", x.duration).put("w", x.updated))
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(WATCHED, arr.toString()).apply()
+    }
+
+    private fun read(raw: String?): List<Entry> {
+        val arr = runCatching { JSONArray(raw ?: "[]") }.getOrDefault(JSONArray())
+        return (0 until arr.length()).map { i ->
+            val o = arr.getJSONObject(i)
+            Entry(o.getString("k"), o.getString("u"), o.optString("t"), o.optLong("p"), o.optLong("d"), o.optLong("w"),
+                o.optString("l").ifEmpty { null })
+        }
     }
 
     private fun write(ctx: Context, list: List<Entry>) {

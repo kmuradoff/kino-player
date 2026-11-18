@@ -18,6 +18,10 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import com.xgimiru.player.net.RoutingDataSource
+import com.xgimiru.player.settings.SubStyle
+import com.xgimiru.player.media.Badges
+import com.xgimiru.player.media.MediaFacts
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -129,7 +133,7 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
         val selector = DefaultTrackSelector(ctx).apply { setParameters(trackParams(buildUponParameters())) }
         trackSelector = selector
         player = ExoPlayer.Builder(ctx, renderers)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(ctx, http), RpuTapExtractorsFactory(dovi) {
+            .setMediaSourceFactory(DefaultMediaSourceFactory(RoutingDataSource.Factory(DefaultDataSource.Factory(ctx, http)), RpuTapExtractorsFactory(dovi) {
                 HdrPolicy.caps(ctx) to HdrPolicy.prefs(ctx)
             }))
             .setLoadControl(load)
@@ -190,12 +194,20 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
                 } && tracks.groups.none { g -> g.type == C.TRACK_TYPE_VIDEO && g.isSupported }
                 if (dvOnly) {
                     player.stop()
-                    listener.onError(DV5_MESSAGE, false)
+                    listener.onError(DV5_MESSAGE, EngineRules.Problem.OTHER)
+                    return
+                }
+                // no decoder for the picture or for any sound track: Media3 would play black or silent
+                val has = { t: Int -> tracks.groups.any { it.type == t } }
+                if (tracks.groups.isNotEmpty() && EngineRules.tracksUnsupported(has(C.TRACK_TYPE_VIDEO), tracks.isTypeSupported(C.TRACK_TYPE_VIDEO, true),
+                        has(C.TRACK_TYPE_AUDIO), tracks.isTypeSupported(C.TRACK_TYPE_AUDIO, true))) {
+                    player.stop()
+                    listener.onError("Формат не поддерживается.", EngineRules.Problem.FORMAT)
                     return
                 }
                 listener.onTracksChanged()
             }
-            override fun onPlayerError(e: PlaybackException) = listener.onError(describe(e), isFormatProblem(e))
+            override fun onPlayerError(e: PlaybackException) = listener.onError(describe(e), EngineRules.problem(e.errorCode))
         })
     }
 
@@ -244,7 +256,23 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
     private fun failOpen(e: Throwable) {
         android.util.Log.w("ExoEngine", "open failed", e)
         runCatching { player.stop() }
-        main.post { listener.onError("Этот поток не открывается (${e.javaClass.simpleName}).", true) }
+        main.post { listener.onError("Этот поток не открывается (${e.javaClass.simpleName}).", EngineRules.Problem.FORMAT) }
+    }
+
+    override fun badges(): List<String> {
+        var w = 0; var h = 0; var hdr: String? = null; var dv = dovi.active; var atmos = false
+        for (g in player.currentTracks.groups) for (i in 0 until g.length) if (g.isTrackSelected(i)) {
+            val f = g.getTrackFormat(i)
+            when (g.type) {
+                C.TRACK_TYPE_VIDEO -> {
+                    w = f.width; h = f.height
+                    if (f.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION || f.codecs?.startsWith("dv") == true) dv = true
+                    when (f.colorInfo?.colorTransfer) { C.COLOR_TRANSFER_ST2084 -> hdr = "HDR10"; C.COLOR_TRANSFER_HLG -> hdr = "HLG" }
+                }
+                C.TRACK_TYPE_AUDIO -> if (f.sampleMimeType == MimeTypes.AUDIO_E_AC3_JOC) atmos = true
+            }
+        }
+        return Badges.card(MediaFacts(width = w, height = h, hdr = hdr, dolbyVision = dv, atmos = atmos))
     }
 
     override fun play() = player.play()
@@ -502,24 +530,7 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
         return b.setTunnelingEnabled(tunneling)
     }
 
-    private fun styleSubtitles(v: SubtitleView) {
-        val fg = when (cfg.string(K.SUB_COLOR)) {
-            "yellow" -> 0xFFFFE14D.toInt(); "grey" -> 0xFFD2D2D2.toInt(); "cyan" -> 0xFF7FE3FF.toInt(); "green" -> 0xFF8DEB8D.toInt()
-            else -> Color.WHITE
-        }
-        val bg = when (cfg.string(K.SUB_BACK)) { "half" -> 0x99000000.toInt(); "solid" -> Color.BLACK; else -> Color.TRANSPARENT }
-        val edge = when (cfg.string(K.SUB_EDGE)) {
-            "shadow" -> CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW; "raised" -> CaptionStyleCompat.EDGE_TYPE_RAISED
-            "none" -> CaptionStyleCompat.EDGE_TYPE_NONE; else -> CaptionStyleCompat.EDGE_TYPE_OUTLINE
-        }
-        val face = Typeface.create("sans-serif-medium", if (cfg.bool(K.SUB_BOLD)) Typeface.BOLD else Typeface.NORMAL)
-        v.setStyle(CaptionStyleCompat(fg, bg, Color.TRANSPARENT, edge, Color.argb(230, 0, 0, 0), face))
-        v.setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * cfg.subSize / 100f)
-        v.setBottomPaddingFraction(cfg.subPosition / 100f)
-        val own = cfg.bool(K.SUB_STYLES)
-        v.setApplyEmbeddedStyles(own)
-        v.setApplyEmbeddedFontSizes(own)
-    }
+    private fun styleSubtitles(v: SubtitleView) = SubStyle.apply(v, cfg)
 
     /** Усиление громкости и ночной режим: эффекты Android на сессии звука плеера (не для звука на ресивер). */
     private fun applyEffects() {
@@ -606,18 +617,6 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
     }
 
     /** Ошибки формата/декодера — повод перейти на VLC; сетевые — нет. */
-    private fun isFormatProblem(e: PlaybackException) = e.errorCode in listOf(
-        PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
-        PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED,
-        PlaybackException.ERROR_CODE_DECODING_FAILED,
-        PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
-        PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
-        PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
-        PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
-        PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED,
-        PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED,
-    )
-
     private fun describe(e: PlaybackException): String = when (e.errorCode) {
         PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
         PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ->

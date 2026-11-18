@@ -1,16 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="accent">#6E9BF2</color>
-    <color name="accent_warm">#9DBCF7</color>
-    <color name="text">#FFFFFFFF</color>
-    <color name="text_dim">#B3FFFFFF</color>
-    <color name="text_faint">#73FFFFFF</color>
-    <color name="panel">#E6121418</color>
-    <color name="card">#D91A1D23</color>
-    <color name="focus">#29FFFFFF</color>
-    <color name="field">#E9EBEF</color>
-    <color name="dialog_bg">#FFFFFF</color>
-    <color name="focus_pill">#12151B</color>
+    <!-- Lumen Play "Проводник": dark graphite by default, the light theme is applied in code (ui/Ui) -->
+    <color name="accent">#3B78E7</color>
+    <color name="accent_warm">#AEB3BB</color>
+    <color name="text">#FFF2F3F5</color>
+    <color name="text_dim">#FFAEB3BB</color>
+    <color name="text_faint">#FF80858D</color>
+    <color name="panel">#F7131416</color>
+    <color name="card">#F21C1D20</color>
+    <color name="focus">#3B78E7</color>
+    <color name="field">#131416</color>
+    <color name="dialog_bg">#1C1D20</color>
+    <color name="dialog_bg_light">#EBE9E5</color>
+    <color name="focus_pill">#3B78E7</color>
     <color name="on_focus">#FFFFFF</color>
-    <color name="dialog_accent">#2A5CC4</color>
 </resources>

@@ -3,9 +3,8 @@ package com.xgimiru.player
 import android.net.Uri
 
 /**
- * Движок воспроизведения. Интерфейс «Кино» один, движков два:
- *  - [ExoEngine] (Media3) — современные MKV/MP4/TS: правильный Dolby Vision и плавный 4K HDR;
- *  - [VlcEngine] (libVLC) — старьё вроде AVI/XviD, сетевые папки (SMB, NFS, FTP) и запасной вариант.
+ * Playback engine. Media3 ([ExoEngine]) plays everything it can, libVLC ([VlcEngine]) only what Media3 cannot:
+ * NFS, FTP and SFTP folders and formats Media3 refuses. The choice is made by [EngineRules].
  */
 interface Engine {
 
@@ -16,8 +15,8 @@ interface Engine {
         fun onBuffering(active: Boolean, percent: Int)
         fun onTracksChanged()
         fun onEnded()
-        /** [fallback] — стоит попробовать другой движок (формат/кодек не пошёл). */
-        fun onError(message: String, fallback: Boolean)
+        /** [problem] tells [EngineRules] whether another engine may help (format, unreadable SMB server). */
+        fun onError(message: String, problem: EngineRules.Problem)
         /** Движок сам встал на паузу: звук ушёл с Bluetooth или наушников (AUDIO_BECOMING_NOISY). */
         fun onPausedBySystem() {}
     }
@@ -52,6 +51,9 @@ interface Engine {
     /** null — «Авто», адаптивный выбор по скорости сети. */
     fun selectVideo(id: String?) {}
 
+    /** Chips of the player panel title: 4K, HDR10, Dolby Vision, Atmos. */
+    fun badges(): List<String> = emptyList()
+
     /** «4K · HEVC · Dolby Vision» */
     fun videoInfo(): String?
     fun audioInfo(): String?
@@ -71,15 +73,4 @@ interface Engine {
     fun setSubtitleEncoding(charset: String?) {}
 
     fun release()
-
-    companion object {
-        /** Форматы, которые Media3 играет плохо или не играет вовсе. */
-        val LEGACY = setOf("avi", "divx", "wmv", "asf", "flv", "vob", "mpg", "mpeg", "rm", "rmvb", "3gp", "ogm")
-
-        /** Сетевые папки, которые умеет только libVLC. */
-        val VLC_SCHEMES = setOf("smb", "nfs", "ftp", "ftps", "sftp")
-
-        fun prefersVlc(uri: Uri): Boolean = uri.scheme?.lowercase() in VLC_SCHEMES ||
-            uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase() in LEGACY
-    }
 }

@@ -41,7 +41,7 @@ class VlcEngine(ctx: Context, private val host: FrameLayout, private val listene
                 MediaPlayer.Event.LengthChanged -> length = e.lengthChanged
                 MediaPlayer.Event.ESAdded, MediaPlayer.Event.ESSelected -> listener.onTracksChanged()
                 MediaPlayer.Event.EndReached -> listener.onEnded()
-                MediaPlayer.Event.EncounteredError -> listener.onError("Источник недоступен или формат не поддерживается.", false)
+                MediaPlayer.Event.EncounteredError -> listener.onError("Источник недоступен или формат не поддерживается.", EngineRules.Problem.OTHER)
             }
         }
     }
@@ -79,11 +79,8 @@ class VlcEngine(ctx: Context, private val host: FrameLayout, private val listene
         if (cfg.boostDb > 0) o += "--gain=" + "%.2f".format(Locale.US, 10.0.pow(cfg.boostDb / 20.0))
         if (cfg.bool(K.NIGHT)) o += "--audio-filter=compressor"
         // видео
-        when (val d = cfg.string(K.DEINTERLACE)) {
-            "auto" -> o += "--deinterlace=-1"
-            "off" -> o += "--deinterlace=0"
-            else -> { o += "--deinterlace=1"; o += "--deinterlace-mode=$d" }
-        }
+        // only old files reach libVLC: interlaced DVD and TV rips are common there, deinterlace when the file says so
+        o += "--deinterlace=-1"
         return o
     }
 
@@ -119,7 +116,7 @@ class VlcEngine(ctx: Context, private val host: FrameLayout, private val listene
         if (startMs > 0) media.addOption(":start-time=%.1f".format(Locale.US, startMs / 1000.0))
         subCharset?.let { media.addOption(":subsdec-encoding=$it") }
         // Старый XviD/DivX — программным декодером: он лёгкий, а аппаратный с ним капризничает.
-        val legacy = uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase() in Engine.LEGACY
+        val legacy = uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase() in LEGACY
         when (cfg.string(K.DECODER)) {
             "sw" -> media.setHWDecoderEnabled(false, false)
             "hw" -> media.setHWDecoderEnabled(true, true)
@@ -201,5 +198,10 @@ class VlcEngine(ctx: Context, private val host: FrameLayout, private val listene
         player.release()
         vlc.release()
         host.removeView(layout)
+    }
+
+    private companion object {
+        /** Old containers whose MPEG-4 ASP video decodes better in software. */
+        val LEGACY = setOf("avi", "divx", "wmv", "asf", "flv", "vob", "mpg", "mpeg", "rm", "rmvb", "3gp", "ogm")
     }
 }

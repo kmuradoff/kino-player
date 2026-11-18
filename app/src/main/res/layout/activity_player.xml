@@ -35,11 +35,12 @@
 
         <View
             android:layout_width="match_parent"
-            android:layout_height="340dp"
+            android:layout_height="115dp"
             android:layout_gravity="bottom"
             android:background="@drawable/scrim_bottom" />
 
         <LinearLayout
+            android:id="@+id/top"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_gravity="top"
@@ -102,69 +103,69 @@
             </LinearLayout>
         </LinearLayout>
 
+        <!-- Info chips (video and sound) above the bar, a hint on the right -->
         <LinearLayout
+            android:id="@+id/chips"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom"
-            android:orientation="vertical"
-            android:paddingStart="64dp"
-            android:paddingEnd="64dp"
-            android:paddingBottom="40dp">
+            android:layout_marginStart="48dp"
+            android:layout_marginEnd="48dp"
+            android:layout_marginBottom="76dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
-            <LinearLayout
-                android:layout_width="match_parent"
+            <TextView
+                android:id="@+id/hint"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:gravity="bottom"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:id="@+id/position"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:fontFamily="sans-serif-medium"
-                    android:fontFeatureSettings="tnum"
-                    android:textColor="@color/text"
-                    android:textSize="22sp" />
-
-                <View
-                    android:layout_width="0dp"
-                    android:layout_height="1dp"
-                    android:layout_weight="1" />
-
-                <TextView
-                    android:id="@+id/remaining"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:fontFeatureSettings="tnum"
-                    android:textColor="@color/text_dim"
-                    android:textSize="18sp" />
-            </LinearLayout>
-
-            <com.xgimiru.player.ProgressView
-                android:id="@+id/progress"
-                android:layout_width="match_parent"
-                android:layout_height="64dp"
-                android:layout_marginTop="2dp" />
-
-            <LinearLayout
-                android:id="@+id/chips"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:id="@+id/hint"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:gravity="end"
-                    android:text="Вниз: звук, субтитры, экран"
-                    android:textColor="@color/text_faint"
-                    android:textSize="15sp" />
-            </LinearLayout>
+                android:layout_weight="1"
+                android:gravity="end"
+                android:textColor="@color/text_faint"
+                android:textSize="11sp" />
         </LinearLayout>
+
+        <!-- Progress: the bar line sits at y 972 of 1080, times under it (mock "Проводник") -->
+        <com.xgimiru.player.ProgressView
+            android:id="@+id/progress"
+            android:layout_width="match_parent"
+            android:layout_height="64dp"
+            android:layout_gravity="bottom"
+            android:layout_marginStart="48dp"
+            android:layout_marginEnd="48dp"
+            android:layout_marginBottom="42dp" />
+
+        <TextView
+            android:id="@+id/position"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|start"
+            android:layout_marginStart="48dp"
+            android:layout_marginBottom="26dp"
+            android:includeFontPadding="false"
+            android:textColor="@color/text"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/endTime"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|center_horizontal"
+            android:layout_marginBottom="26dp"
+            android:includeFontPadding="false"
+            android:textColor="@color/text_dim"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/remaining"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|end"
+            android:layout_marginEnd="48dp"
+            android:layout_marginBottom="26dp"
+            android:includeFontPadding="false"
+            android:textColor="@color/text"
+            android:textSize="12sp" />
     </FrameLayout>
 
     <!-- Пауза / воспроизведение — вспышка по центру -->
@@ -331,33 +332,4 @@
             android:textColor="@color/text_faint"
             android:textSize="14sp" />
     </LinearLayout>
-
-    <!-- Панель: звук, субтитры, скорость, экран -->
-    <FrameLayout
-        android:id="@+id/panel"
-        android:layout_width="480dp"
-        android:layout_height="match_parent"
-        android:layout_gravity="end"
-        android:background="@drawable/panel_bg"
-        android:translationX="480dp"
-        android:visibility="invisible">
-
-        <ScrollView
-            android:id="@+id/panelScroll"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:clipToPadding="false"
-            android:paddingTop="48dp"
-            android:paddingBottom="48dp"
-            android:scrollbars="none">
-
-            <LinearLayout
-                android:id="@+id/panelList"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:paddingStart="28dp"
-                android:paddingEnd="28dp" />
-        </ScrollView>
-    </FrameLayout>
 </FrameLayout>

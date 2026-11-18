@@ -1,179 +1,296 @@
 package com.xgimiru.player
 
+import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.InputType
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
+import android.widget.EditText
 import android.widget.FrameLayout
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import com.xgimiru.player.files.FilesPane
-import com.xgimiru.player.files.NetworkPane
-import com.xgimiru.player.home.HomePane
-import com.xgimiru.player.ui.Backdrop
-import com.xgimiru.player.ui.Host
+import android.widget.Toast
+import androidx.media3.common.util.UnstableApi
+import com.xgimiru.player.files.FolderPane
+import com.xgimiru.player.files.LocalSource
+import com.xgimiru.player.files.Places
+import com.xgimiru.player.files.ShareSource
+import com.xgimiru.player.home.StartPane
+import com.xgimiru.player.net.NetShares
+import com.xgimiru.player.net.Share
+import com.xgimiru.player.net.ShareUri
+import com.xgimiru.player.settings.SettingsPane
 import com.xgimiru.player.ui.Img
-import com.xgimiru.player.ui.Info
+import com.xgimiru.player.ui.Nav
 import com.xgimiru.player.ui.Pane
+import com.xgimiru.player.ui.Rail
 import com.xgimiru.player.ui.Ui
 import com.xgimiru.player.ui.tr
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import org.videolan.libvlc.Dialog
+import org.videolan.libvlc.LibVLC
+import org.videolan.libvlc.interfaces.IMedia
+import org.videolan.libvlc.util.MediaBrowser
 
 /**
- * Lumen Play. Сверху логотип, разделы (Главная, Файлы, Сеть), настройки и часы; под ними
- * раздел. Раздел открывается, когда на нём фокус, как вкладки Lumen Home. Фон и блок описания
- * общие: их меняет раздел, когда двигается фокус.
+ * Lumen Play: the left list of places (Continue, History, USB sticks and the device storage by name,
+ * network folders, Add a folder, Settings) and the open place to its right. OK on a place opens it, Right
+ * goes into it, Left from its left edge comes back to the list.
  */
-class MainActivity : Activity(), Host {
-
-    private lateinit var backdrop: Backdrop
-    private lateinit var info: Info
+@UnstableApi
+class MainActivity : Activity(), Nav {
+    private lateinit var rail: Rail
     private lateinit var content: FrameLayout
-    private lateinit var clock: TextView
     private lateinit var update: TextView
-    private val tabs = LinkedHashMap<String, TextView>()
     private val panes = HashMap<String, Pane>()
-    private var current = "home"
+    private var current = "cont"
     private val handler = Handler(Looper.getMainLooper())
+    private var vlc: LibVLC? = null
+    private var discovery: MediaBrowser? = null
+    private val found = LinkedHashMap<String, String>()   // server link -> name, found on the network
     private var updateInfo: Updater.Info? = null
     private var updating = false
-    private val tick = object : Runnable {
-        override fun run() { clock.text = SimpleDateFormat("H:mm", Locale.getDefault()).format(Date()); handler.postDelayed(this, 10_000) }
+
+    private val mounts = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, i: Intent) {
+            refreshRail()
+            if (current.startsWith("vol:") && current !in rail.ids()) open("cont")
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // network share passwords of older builds were stored in plain text: seal them with the key store key
-        Thread { runCatching { com.xgimiru.player.net.NetShares.migrate(applicationContext) } }.start()
+        Thread { runCatching { NetShares.migrate(applicationContext) } }.start()
         Ui.init(this)
         window.setBackgroundDrawable(Ui.field())
-        val d = { v: Number -> Ui.dp(this, v) }
         val root = FrameLayout(this)
-        backdrop = Backdrop(this)
-        root.addView(backdrop, Ui.frame(-1, -1))
-
-        info = Info(this).apply { visibility = View.INVISIBLE }
-        root.addView(info, Ui.frame(d(600), -2).apply { leftMargin = d(56); topMargin = d(96) })
-
-        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
-        col.addView(topBar(), Ui.linear(-1, -2))
-        update = Ui.text(this, 15f, Ui.GROUND, Ui.medium(), 2).apply {
-            setPadding(d(20), d(10), d(20), d(10))
-            background = Ui.rounded(Ui.ACCENT, d(24).toFloat())
-            isFocusable = true; isClickable = true
-            visibility = View.GONE
-            setOnClickListener { startUpdate() }
-        }
-        col.addView(update, Ui.linear(-2, -2).apply { leftMargin = d(56); topMargin = d(4) })
         content = FrameLayout(this).apply { clipChildren = false; clipToPadding = false }
-        col.addView(content, Ui.linear(-1, 0, 1f))
-        root.addView(col, Ui.frame(-1, -1))
+        root.addView(content, Ui.frame(-1, -1).apply { leftMargin = Ui.px(this@MainActivity, 432) })
+        rail = Rail(this) { open(it) }
+        root.addView(rail, Ui.frame(Ui.px(this, 432), -1))
+        update = Ui.pill(this, "") { startUpdate() }.apply { visibility = View.GONE }
+        root.addView(update, Ui.frame(-2, -2, Gravity.END).apply { topMargin = Ui.px(this@MainActivity, 40); rightMargin = Ui.px(this@MainActivity, 56) })
         setContentView(root)
-
-        panes["home"] = HomePane(this, this) { tab -> select(tab, focusContent = true) }
-        panes["files"] = FilesPane(this, this)
-        panes["network"] = NetworkPane(this, this)
-        current = savedInstanceState?.getString("tab") ?: "home"
-        select(current, focusContent = true, force = true)
+        intent.getStringExtra("section")?.let { SettingsPane.pending = it to intent.getStringExtra("focus") }
+        current = savedInstanceState?.getString("place") ?: intent.getStringExtra("open") ?: "cont"
+        refreshRail()
+        open(current)
+        askStorage()
         Img.trim(this)
+        registerReceiver(mounts, IntentFilter().apply {
+            addAction(Intent.ACTION_MEDIA_MOUNTED); addAction(Intent.ACTION_MEDIA_REMOVED)
+            addAction(Intent.ACTION_MEDIA_UNMOUNTED); addAction(Intent.ACTION_MEDIA_EJECT); addDataScheme("file")
+        })
     }
 
-    private fun topBar(): View {
-        val d = { v: Number -> Ui.dp(this, v) }
-        val bar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(d(52), d(28), d(52), d(10))
-        }
-        bar.addView(ImageView(this).apply { setImageResource(R.drawable.ic_app) }, Ui.linear(d(30), d(30)).apply { rightMargin = d(10) })
-        bar.addView(Ui.text(this, 19f, Ui.INK, Ui.bold()).apply { text = "Lumen Play" }, Ui.linear(-2, -2).apply { rightMargin = d(28) })
-        for ((key, label) in listOf("home" to tr("Главная", "Home"), "files" to tr("Файлы", "Files"),
-                "network" to tr("Сеть", "Network"))) {
-            val t = Ui.text(this, 16f, Ui.INK2, Ui.medium()).apply {
-                text = label
-                setPadding(d(16), d(7), d(16), d(7))
-                isFocusable = true; isClickable = true
-                setOnFocusChangeListener { _, f -> paintTab(this, key, f); if (f) select(key) }
-                setOnClickListener { focusContent() }
-                setOnKeyListener { _, code, ev -> if (ev.action == KeyEvent.ACTION_DOWN && code == KeyEvent.KEYCODE_DPAD_DOWN) focusContent() else false }
-            }
-            tabs[key] = t
-            bar.addView(t, Ui.linear(-2, -2).apply { rightMargin = d(4) })
-        }
-        bar.addView(View(this), Ui.linear(0, 1, 1f))
-        bar.addView(ImageView(this).apply {
-            val pad = d(9)
-            setPadding(pad, pad, pad, pad)
-            isFocusable = true; isClickable = true
-            contentDescription = tr("Настройки", "Settings")
-            fun paint(f: Boolean) {
-                background = Ui.rounded(if (f) Ui.FOCUS else 0, d(20).toFloat())
-                setImageDrawable(Ui.icon(this@MainActivity, R.drawable.ic_settings, if (f) Ui.GROUND else Ui.INK2))
-            }
-            paint(false)
-            setOnFocusChangeListener { _, f -> paint(f) }
-            setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
-        }, Ui.linear(d(40), d(40)).apply { rightMargin = d(22) })
-        clock = Ui.text(this, 28f, Ui.INK, Ui.serif())
-        bar.addView(clock)
-        return bar
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        intent.getStringExtra("section")?.let { SettingsPane.pending = it to intent.getStringExtra("focus"); open("set") }
     }
 
-    private fun paintTab(t: TextView, key: String, focused: Boolean) {
-        val d = Ui.dp(this, 22).toFloat()
-        t.background = when {
-            focused -> Ui.rounded(Ui.FOCUS, d)
-            key == current -> Ui.rounded(Ui.SOFT, d)
-            else -> null
-        }
-        t.setTextColor(if (focused) Ui.GROUND else if (key == current) Ui.INK else Ui.INK2)
+    // ── Places ──
+    override fun refreshRail() {
+        val cont = History.all(this).count { !it.finished }
+        val vols = Places.volumes(this).map { Rail.Item(it.id, it.name, if (it.primary) R.drawable.ic_hard_drive else R.drawable.ic_usb, Places.free(it.dir)) }
+        val saved = NetShares.saved(this)
+        val shares = saved.map { Rail.Item("share:" + it.uri, it.name, ShareSource.icon(it.uri), Places.shareSub(it.uri)) } +
+            found.filter { (u, _) -> saved.none { s -> s.uri.equals(u, true) } }.entries.take(4)
+                .map { (u, n) -> Rail.Item("found:$u", n, ShareSource.icon(u), Places.shareSub(u)) }
+        rail.set(listOf(
+            Rail.Group(tr("Смотреть", "Watch"), listOf(
+                Rail.Item("cont", tr("Продолжить", "Continue"), R.drawable.ic_play_arrow, count = cont),
+                Rail.Item("hist", tr("История", "History"), R.drawable.ic_history))),
+            Rail.Group(tr("Файлы", "Files"), vols),
+            Rail.Group(tr("Сеть", "Network"), shares + Rail.Item("add", tr("Добавить папку", "Add a folder"), R.drawable.ic_add)),
+        ), Rail.Item("set", tr("Настройки", "Settings"), R.drawable.ic_settings))
+        rail.current = current
     }
 
-    private fun select(key: String, focusContent: Boolean = false, force: Boolean = false) {
-        if (key != current || force) {
-            panes[current]?.onHide()
-            current = key
+    override fun open(place: String) = open(place, focus = true)
+
+    private fun open(place: String, focus: Boolean) {
+        if (place == "add") { addDialog(); return }
+        val pane = panes[place] ?: create(place)?.also { panes[place] = it } ?: run { if (place != "cont") open("cont", focus); return }
+        if (place != current || content.childCount == 0) {
+            panes[current]?.takeIf { content.childCount > 0 }?.onHide()
             content.removeAllViews()
-            info.visibility = View.INVISIBLE
-            val p = panes[key]!!
-            content.addView(p.view, Ui.frame(-1, -1))
-            p.onShow()
-            for ((k, t) in tabs) paintTab(t, k, t.isFocused)
+            content.addView(pane.view, Ui.frame(-1, -1))
         }
-        if (focusContent) content.post { if (!focusContent()) tabs[key]?.requestFocus() }
+        current = place
+        rail.current = place
+        pane.onShow()
+        if (focus) content.post { if (!pane.focusFirst()) rail.focusCurrent() }
     }
 
-    private fun focusContent(): Boolean = panes[current]?.focusFirst() == true
+    private fun create(id: String): Pane? = when {
+        id == "cont" -> StartPane(this, this, historyOnly = false)
+        id == "hist" -> StartPane(this, this, historyOnly = true)
+        id == "set" -> SettingsPane(this)
+        id.startsWith("vol:") -> Places.volumes(this).firstOrNull { it.id == id }?.let { FolderPane(this, this, LocalSource(this, it)) }
+        id.startsWith("share:") -> NetShares.saved(this).firstOrNull { "share:" + it.uri == id }?.let {
+            FolderPane(this, this, ShareSource(this, id, it.name, it.uri) { libVlc() })
+        }
+        id.startsWith("found:") -> id.removePrefix("found:").let { u -> FolderPane(this, this, ShareSource(this, id, found[u] ?: u, u) { libVlc() }) }
+        else -> null
+    }
 
-    // ── Host ──
-    // светлая тема Lumen 2.0 — чистое поле без фоновых кадров (картинка есть на самих карточках)
-    override fun backdrop(url: String?) = backdrop.show(url.takeIf { Ui.dark })
-    override fun info(eyebrow: String?, title: String?, meta: String?, desc: String?, progress: Float) =
-        info.set(eyebrow, title, meta, desc, progress)
+    override fun focusRail() { rail.focusCurrent() }
+
+    // ── Keys ──
+    override fun dispatchKeyEvent(e: KeyEvent): Boolean {
+        if ((panes[current] as? SettingsPane)?.onKey(e) == true) return true
+        if (e.action == KeyEvent.ACTION_DOWN) {
+            val f = currentFocus
+            when (e.keyCode) {
+                KeyEvent.KEYCODE_DPAD_LEFT -> if (f != null && !rail.has(f)) {
+                    val next = f.focusSearch(View.FOCUS_LEFT)
+                    if (next == null || rail.has(next)) { rail.focusCurrent(); return true }
+                }
+                KeyEvent.KEYCODE_DPAD_RIGHT -> if (f != null && rail.has(f)) {
+                    panes[current]?.focusFirst()
+                    return true
+                }
+                KeyEvent.KEYCODE_MENU -> if (f != null && rail.has(f)) {
+                    val id = (f as? Rail.Row)?.item?.id
+                    if (id != null && id.startsWith("share:")) { forget(id.removePrefix("share:")); return true }
+                }
+            }
+        }
+        return super.dispatchKeyEvent(e)
+    }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
             if (panes[current]?.onBack() == true) return true
-            val tab = tabs[current]
-            if (tab != null && !tab.isFocused) { tab.requestFocus(); return true }
-            if (current != "home") { tabs["home"]?.requestFocus(); return true }
+            if (!rail.has(currentFocus)) { rail.focusCurrent(); return true }
+            if (current != "cont") { open("cont", focus = false); rail.focusCurrent(); return true }
         }
         return super.onKeyDown(keyCode, event)
     }
 
+    // ── Network ──
+    private fun libVlc(): LibVLC? {
+        vlc?.let { return it }
+        return runCatching { LibVLC(this, arrayListOf("--no-stats")) }.getOrNull()?.also {
+            vlc = it
+            Dialog.setCallbacks(it, dialogs)
+        }
+    }
+
+    private fun startDiscovery() {
+        if (discovery != null) return
+        val v = libVlc() ?: return
+        discovery = MediaBrowser(v, object : MediaBrowser.EventListener {
+            override fun onMediaAdded(index: Int, media: IMedia) {
+                val uri = media.uri?.toString() ?: return
+                if (found.containsKey(uri)) return
+                found[uri] = media.getMeta(IMedia.Meta.Title) ?: uri
+                refreshRail()
+            }
+            override fun onMediaRemoved(index: Int, media: IMedia) {
+                if (found.remove(media.uri?.toString()) != null) refreshRail()
+            }
+            override fun onBrowseEnd() {}
+        }, handler).also { it.discoverNetworkShares() }
+    }
+
+    private fun stopDiscovery() { discovery?.release(); discovery = null }
+
+    private fun field(hint: String, password: Boolean = false) = EditText(this).apply {
+        this.hint = hint
+        setSingleLine()
+        inputType = if (password) InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            else InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+    }
+
+    private fun form(vararg fields: View) = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(Ui.dp(this@MainActivity, 24), Ui.dp(this@MainActivity, 8), Ui.dp(this@MainActivity, 24), 0)
+        fields.forEach { addView(it) }
+    }
+
+    private fun addDialog() {
+        val addr = field(tr("Адрес: 192.168.1.10/films или nfs://nas/video", "Address: 192.168.1.10/films or nfs://nas/video"))
+        val name = field(tr("Название, например NAS", "Name, for example NAS")).apply { inputType = InputType.TYPE_CLASS_TEXT }
+        val user = field(tr("Имя пользователя (если нужно)", "User name (if needed)"))
+        val pass = field(tr("Пароль", "Password"), password = true)
+        AlertDialog.Builder(this, Ui.dialogTheme())
+            .setTitle(tr("Папка в сети", "Network folder"))
+            .setView(form(addr, name, user, pass))
+            .setPositiveButton(tr("Сохранить", "Save")) { _, _ ->
+                val uri = ShareUri.normalize(addr.text.toString()) ?: return@setPositiveButton
+                val title = name.text.toString().trim().ifEmpty { uri.substringAfter("://").trimEnd('/') }
+                NetShares.add(this, Share(title, uri, user.text.toString().ifBlank { null }, pass.text.toString().ifBlank { null }))
+                panes.remove("share:$uri")
+                refreshRail()
+                open("share:$uri")
+            }
+            .setNegativeButton(tr("Отмена", "Cancel"), null)
+            .show()
+    }
+
+    private fun forget(uri: String) {
+        val s = NetShares.saved(this).firstOrNull { it.uri == uri } ?: return
+        AlertDialog.Builder(this, Ui.dialogTheme())
+            .setTitle(s.name)
+            .setMessage(tr("Убрать эту папку из списка?", "Remove this folder from the list?"))
+            .setPositiveButton(tr("Убрать", "Remove")) { _, _ ->
+                NetShares.remove(this, uri)
+                panes.remove("share:$uri")
+                if (current == "share:$uri") open("cont", focus = false)
+                refreshRail()
+                rail.focusCurrent()
+            }
+            .setNegativeButton(tr("Отмена", "Cancel"), null)
+            .show()
+    }
+
+    /** libVLC windows: a login for a server (kept for the player), errors in short. */
+    private val dialogs = object : Dialog.Callbacks {
+        override fun onDisplay(dialog: Dialog.ErrorMessage) {
+            Toast.makeText(this@MainActivity, dialog.text ?: dialog.title, Toast.LENGTH_LONG).show()
+        }
+        override fun onDisplay(dialog: Dialog.LoginDialog) {
+            val user = field(tr("Имя пользователя", "User name")).apply { setText(dialog.defaultUsername ?: "") }
+            val pass = field(tr("Пароль", "Password"), password = true)
+            val target = (panes[current] as? FolderPane)?.source?.root
+            AlertDialog.Builder(this@MainActivity, Ui.dialogTheme())
+                .setTitle(dialog.title ?: tr("Вход", "Sign in"))
+                .setMessage(dialog.text)
+                .setView(form(user, pass))
+                .setPositiveButton(tr("Войти", "Sign in")) { _, _ ->
+                    val u = user.text.toString(); val p = pass.text.toString()
+                    if (target != null) NetShares.rememberLogin(this@MainActivity, target, u, p)
+                    dialog.postLogin(u, p, false)
+                }
+                .setNegativeButton(tr("Отмена", "Cancel")) { _, _ -> dialog.dismiss() }
+                .setOnCancelListener { dialog.dismiss() }
+                .show()
+        }
+        override fun onDisplay(dialog: Dialog.QuestionDialog) = dialog.dismiss()
+        override fun onDisplay(dialog: Dialog.ProgressDialog) {}
+        override fun onCanceled(dialog: Dialog?) {}
+        override fun onProgressUpdate(dialog: Dialog.ProgressDialog) {}
+    }
+
+    // ── Life cycle ──
     override fun onResume() {
         super.onResume()
-        handler.post(tick)
-        backdrop.resume()
-        panes[current]?.onShow()
-        // для проверки на столе: am start ... --es update_url http://127.0.0.1:PORT/kino-update.json
+        refreshRail()
+        if (content.childCount > 0) panes[current]?.onShow()
+        startDiscovery()
+        // for a desk test: am start ... --es update_url http://127.0.0.1:PORT/kino-update.json
         val testUrl = intent.getStringExtra("update_url")
         if (testUrl != null) Updater.setTestUrl(this, testUrl)
         if (!updating) Updater.check(this, testUrl != null) { showUpdate(it) }
@@ -183,18 +300,41 @@ class MainActivity : Activity(), Host {
         com.xgimiru.player.dlna.DlnaService.sync(this)
     }
 
+    override fun onRestart() {
+        super.onRestart()
+        (panes[current] as? SettingsPane)?.onRestart()
+    }
+
     override fun onPause() {
-        handler.removeCallbacks(tick)
-        backdrop.pause()
+        stopDiscovery()
         panes[current]?.onHide()
         super.onPause()
     }
 
-    override fun onSaveInstanceState(out: Bundle) { super.onSaveInstanceState(out); out.putString("tab", current) }
+    override fun onDestroy() {
+        runCatching { unregisterReceiver(mounts) }
+        stopDiscovery()
+        panes.values.forEach { (it as? FolderPane)?.source?.close() }
+        vlc?.let { Dialog.setCallbacks(it, null); it.release() }
+        vlc = null
+        super.onDestroy()
+    }
+
+    override fun onSaveInstanceState(out: Bundle) {
+        super.onSaveInstanceState(out)
+        out.putString("place", current)
+        (panes[current] as? SettingsPane)?.let { if (SettingsPane.pending == null) SettingsPane.pending = it.section to null }
+    }
+
+    private fun askStorage() {
+        val perms = if (Build.VERSION.SDK_INT >= 33) arrayOf(Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_AUDIO)
+            else arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        if (perms.any { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }) requestPermissions(perms, REQ)
+    }
 
     @Deprecated("Deprecated in Java")
     override fun onRequestPermissionsResult(code: Int, perms: Array<out String>, res: IntArray) {
-        if (code == FilesPane.REQ) (panes["files"] as? FilesPane)?.onPermission()
+        if (code == REQ) { refreshRail(); panes[current]?.onShow() }
     }
 
     private fun showUpdate(i: Updater.Info?) {
@@ -216,4 +356,6 @@ class MainActivity : Activity(), Host {
                 update.text = tr("Не получилось обновить: $it. OK: ещё раз", "Update failed: $it. OK to retry")
             })
     }
+
+    private companion object { const val REQ = 41 }
 }
