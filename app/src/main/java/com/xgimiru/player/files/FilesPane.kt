@@ -85,6 +85,11 @@ class FilesPane(private val act: Activity, private val host: Host) : Pane {
         }
         row.addView(placeList, Ui.linear(d(260), -1).apply { rightMargin = d(24) })
         val col = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
+        // без доступа ко всем файлам Android показывает только сами видео: субтитры рядом с ними не видны
+        if (android.os.Build.VERSION.SDK_INT >= 30 && !Environment.isExternalStorageManager()) {
+            col.addView(Ui.pill(act, tr("Разрешить доступ ко всем файлам, чтобы видеть субтитры", "Allow access to all files to see subtitles")) { askAllFiles() },
+                Ui.linear(-2, -2).apply { leftMargin = d(12); bottomMargin = d(12) })
+        }
         col.addView(path, Ui.linear(-1, -2).apply { leftMargin = d(18); bottomMargin = d(8) })
         fileList.apply {
             divider = null
@@ -162,6 +167,15 @@ class FilesPane(private val act: Activity, private val host: Host) : Pane {
             }
             return row
         }
+    }
+
+    private fun askAllFiles() {
+        val pkg = Uri.parse("package:" + act.packageName)
+        val tries = listOf(Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, pkg),
+            Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+        for (i in tries) if (runCatching { act.startActivity(i) }.isSuccess) return
+        android.widget.Toast.makeText(act, tr("Откройте Настройки > Приложения > Lumen Play > Доступ ко всем файлам",
+            "Open Settings > Apps > Lumen Play > All files access"), android.widget.Toast.LENGTH_LONG).show()
     }
 
     private fun human(b: Long): String = when {
