@@ -35,7 +35,7 @@ interface Host {
  * Карточка 16:9 (или квадратная для логотипов): картинка, подпись снизу, полоска прогресса.
  * Без картинки — тёплая заливка с названием, никогда не серый прямоугольник.
  */
-class Card(ctx: Context, wDp: Int, hDp: Int, logo: Boolean = false) : FrameLayout(ctx) {
+class Card(ctx: Context, wDp: Int, hDp: Int, logo: Boolean = false, plain: Boolean = false) : FrameLayout(ctx) {
     val image = ImageView(ctx)
     val label: TextView
     val sub: TextView
@@ -46,7 +46,8 @@ class Card(ctx: Context, wDp: Int, hDp: Int, logo: Boolean = false) : FrameLayou
     init {
         val d = { v: Number -> Ui.dp(ctx, v) }
         layoutParams = LinearLayout.LayoutParams(d(wDp), d(hDp)).apply { rightMargin = d(18) }
-        background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF3A4252.toInt(), 0xFF1B1E25.toInt())).apply { cornerRadius = r }
+        background = if (plain) Ui.rounded(Ui.SURFACE, r)
+            else GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF3A4252.toInt(), 0xFF1B1E25.toInt())).apply { cornerRadius = r }
         clipToOutline = true
         outlineProvider = object : ViewOutlineProvider() {
             override fun getOutline(v: View, o: Outline) = o.setRoundRect(0, 0, v.width, v.height, r)
@@ -54,12 +55,13 @@ class Card(ctx: Context, wDp: Int, hDp: Int, logo: Boolean = false) : FrameLayou
         image.scaleType = if (logo) ImageView.ScaleType.FIT_CENTER else ImageView.ScaleType.CENTER_CROP
         if (logo) image.setPadding(d(26), d(22), d(26), d(34))
         addView(image, Ui.frame(-1, -1))
-        if (!logo) addView(View(ctx).apply {
+        if (!logo && !plain) addView(View(ctx).apply {
             background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(0xE6000000.toInt(), 0x00000000, 0x00000000))
         }, Ui.frame(-1, -1))
         val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(d(14), 0, d(14), d(12)) }
         label = Ui.text(ctx, if (logo) 14f else 16f, ON_IMAGE, Ui.medium())
         sub = Ui.text(ctx, 12f, ON_IMAGE2)
+        if (plain) { label.setTextColor(Ui.INK); sub.setTextColor(Ui.INK2) }
         col.addView(label); col.addView(sub, Ui.linear(-1, -2).apply { topMargin = d(2) })
         barBox.background = Ui.rounded(0x40000000, d(2).toFloat())
         bar.background = Ui.rounded(0xFFFFFFFF.toInt(), d(2).toFloat())

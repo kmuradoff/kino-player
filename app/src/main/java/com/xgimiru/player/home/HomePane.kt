@@ -64,7 +64,7 @@ class HomePane(private val act: Activity, private val host: Host, private val go
                 r.add(step(tr("Открыть файлы", "Open files"), tr("флешка и память", "USB stick and storage")) { go("files") })
                 r.add(step(tr("Папки в сети", "Network folders"), tr("компьютер, NAS, DLNA", "computer, NAS, DLNA")) { go("network") })
                 addView(r, Ui.linear(-1, -2).apply { topMargin = d(18) })
-            }, Ui.linear(-1, -1))
+            }, Ui.linear(-1, -2))
             return
         }
         (root.layoutParams as? android.widget.FrameLayout.LayoutParams)?.topMargin = d(250)
@@ -113,7 +113,7 @@ class HomePane(private val act: Activity, private val host: Host, private val go
         return c
     }
 
-    private fun step(title: String, sub: String, onClick: () -> Unit): Card = Card(act, 260, 146).apply {
+    private fun step(title: String, sub: String, onClick: () -> Unit): Card = Card(act, 260, 146, plain = true).apply {
         label.text = title
         label.textSize = 20f
         this.sub.text = sub

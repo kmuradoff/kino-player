@@ -309,10 +309,9 @@ class SettingsActivity : Activity() {
             row.setOnFocusChangeListener { _, _ -> paint() }
             row.setOnClickListener {
                 cfg.set(c, o.value)
-                closeSheet()
-                val idx = rowViews().indexOfFirst { it.tag == c }
+                // список перестраиваем, пока фокус в окне выбора, иначе фокус уходит в первый раздел
                 showTab(tab)
-                list.post { rowViews().getOrNull(idx)?.requestFocus() }
+                closeSheet(c.key)
             }
             opts.addView(row, Ui.linear(-1, -2).apply { bottomMargin = d(2) })
             if (sel) focus = row
@@ -330,8 +329,10 @@ class SettingsActivity : Activity() {
         return LayerDrawable(arrayOf(ring, core)).apply { val i = d(5); setLayerInset(1, i, i, i, i) }
     }
 
-    private fun closeSheet() {
+    /** Сначала фокус на строку под окном, потом убрать окно: так фокус не падает в первый раздел. */
+    private fun closeSheet(key: String?) {
         sheetOpen = false
+        (rowViews().firstOrNull { (it.tag as? Setting)?.key == key } ?: firstRow())?.requestFocus()
         overlay.visibility = View.GONE
         overlay.removeAllViews()
     }
@@ -347,11 +348,7 @@ class SettingsActivity : Activity() {
 
     override fun dispatchKeyEvent(e: KeyEvent): Boolean {
         if (sheetOpen && (e.keyCode == KeyEvent.KEYCODE_BACK || e.keyCode == KeyEvent.KEYCODE_DPAD_LEFT)) {
-            if (e.action == KeyEvent.ACTION_UP) {
-                val key = (overlay.tag as? String)
-                closeSheet()
-                rowViews().firstOrNull { (it.tag as? Setting)?.key == key }?.requestFocus() ?: firstRow()?.requestFocus()
-            }
+            if (e.action == KeyEvent.ACTION_UP) closeSheet(overlay.tag as? String)
             return true
         }
         if (e.keyCode == KeyEvent.KEYCODE_BACK && list.hasFocus()) {
