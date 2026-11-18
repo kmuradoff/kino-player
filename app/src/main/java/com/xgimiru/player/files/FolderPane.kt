@@ -93,6 +93,11 @@ class FolderPane(private val act: Activity, private val nav: Nav, val source: So
             setOnFocusChangeListener { _, f -> paintRows(); if (f) inspect(selectedItemPosition) }
             setOnItemClickListener { _, _, pos, _ -> click(pos, fromStart = false) }
             setOnItemLongClickListener { _, _, pos, _ -> click(pos, fromStart = true); true }
+            // the table keeps the focus at its ends (down from the last row never jumps into the left list)
+            setOnKeyListener { _, code, ev ->
+                ev.action == android.view.KeyEvent.ACTION_DOWN && (code == android.view.KeyEvent.KEYCODE_DPAD_DOWN && selectedItemPosition >= count - 1 ||
+                    code == android.view.KeyEvent.KEYCODE_DPAD_UP && selectedItemPosition <= 0)
+            }
         }
         root.addView(list, Ui.at(act, 56, 176, p(940), p(812)))
         root.addView(message, Ui.at(act, 74, 196, p(900)))

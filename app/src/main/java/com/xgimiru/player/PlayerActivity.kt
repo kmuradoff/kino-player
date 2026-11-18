@@ -871,12 +871,13 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         next.visibility = View.GONE
         showControls(0)
         top.visibility = View.INVISIBLE
+        chips.visibility = View.INVISIBLE
         sheet.open()
     }
 
     private fun closePanel() {
         panelOpen = false
-        sheet.close { top.visibility = View.VISIBLE }
+        sheet.close { top.visibility = View.VISIBLE; chips.visibility = View.VISIBLE }
         scheduleHide()
     }
 
@@ -932,7 +933,7 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
             val o = K.SCALE.options; val v = o[(o.indexOfFirst { it.value == cfg.string(K.SCALE) } + 1) % o.size].value
             cfg.set(K.SCALE, v); eng.setScale(v.toInt()); rebuildPanel()
         }
-        pic += opt(tr("Соотношение сторон", "Aspect ratio"), icon = R.drawable.ic_crop_free, value = cfg.label(K.ASPECT, ru)) {
+        pic += opt(tr("Пропорции", "Aspect"), icon = R.drawable.ic_crop_free, value = cfg.label(K.ASPECT, ru)) {
             val o = K.ASPECT.options; val v = o[(o.indexOfFirst { it.value == cfg.string(K.ASPECT) } + 1) % o.size].value
             cfg.set(K.ASPECT, v); eng.setAspect(v); rebuildPanel()
         }

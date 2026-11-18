@@ -44,7 +44,8 @@ class StartPane(private val act: Activity, private val nav: Nav, private val his
 
     private fun build() {
         val hadFocus = root.hasFocus()
-        if (hadFocus) root.post { focusFirst() }
+        // after a rebuild the first picture takes the focus (what was just watched), never a row that got it on the way
+        if (hadFocus) root.post { first?.requestFocus() }
         root.removeAllViews()
         first = null
         lastFocus = null

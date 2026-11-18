@@ -46,6 +46,8 @@ interface Source {
 object Kinds {
     val VIDEO = setOf("mkv", "mp4", "m4v", "avi", "mov", "ts", "m2ts", "mts", "webm", "wmv", "mpg", "mpeg", "vob", "flv", "3gp", "divx", "iso", "rmvb", "rm", "asf", "ogm")
     val SUBS = setOf("srt", "ass", "ssa", "vtt", "sub", "smi")
+    /** Folders Android and Windows keep at the root of a stick: never shown. */
+    val SYSTEM = setOf("Android", "LOST.DIR", "System Volume Information", "\$RECYCLE.BIN", "DCIM")
     fun ext(name: String) = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
     fun isVideo(name: String) = ext(name) in VIDEO
     fun order(a: FileItem, b: FileItem) = if (a.dir != b.dir) (if (a.dir) -1 else 1) else Fmt.natural(a.name, b.name)
@@ -64,7 +66,8 @@ class LocalSource(private val ctx: Context, private val v: Places.Volume) : Sour
     override fun list(dir: String, done: (Listing?, String?) -> Unit) {
         io.execute {
             val d = File(Uri.parse(dir).path ?: "")
-            val all = d.listFiles()?.filter { !it.name.startsWith(".") }
+            val atRoot = d.path == v.dir.path
+            val all = d.listFiles()?.filter { !it.name.startsWith(".") && !(atRoot && it.name in Kinds.SYSTEM) }
             val out = all?.let { files ->
                 val names = files.filter { it.isFile }.map { it.name }
                 val langs = SubPrep.langs(ctx.playerSettings())
