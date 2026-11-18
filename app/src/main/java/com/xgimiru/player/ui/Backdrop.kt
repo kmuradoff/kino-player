@@ -15,7 +15,7 @@ import java.util.concurrent.Executors
 /**
  * Фон во весь экран, как у Lumen Home: картинка выбранного, плавная смена (1,2 с) и очень медленное
  * «дыхание» (масштаб 1,02-1,10 за 24 с). Движется только сам слой (scale/translation), без перерисовки.
- * Без картинки — тёплый градиент.
+ * Без картинки — поле темы.
  */
 class Backdrop(ctx: Context) : FrameLayout(ctx) {
     private val layers = arrayOf(ImageView(ctx), ImageView(ctx))
@@ -24,27 +24,30 @@ class Backdrop(ctx: Context) : FrameLayout(ctx) {
     private val io = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private var motion: ValueAnimator? = null
+    private val scrim = FrameLayout(ctx)
+    /** Есть ли сейчас картинка (текст поверх должен быть светлым). */
+    var onImage: ((Boolean) -> Unit)? = null
 
     init {
-        setBackgroundColor(Ui.GROUND)
-        addView(View(ctx).apply {
-            background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF2A1E14.toInt(), 0xFF0A0908.toInt(), 0xFF0A0908.toInt()))
-        }, Ui.frame(-1, -1))
+        setBackgroundColor(Ui.BG)
+        addView(View(ctx).apply { background = Ui.field() }, Ui.frame(-1, -1))
         for (l in layers) {
             l.scaleType = ImageView.ScaleType.CENTER_CROP
             l.alpha = 0f
             addView(l, Ui.frame(-1, -1))
         }
-        // затемнение: слева под текст, снизу под ряды, сверху под панель
-        addView(View(ctx).apply {
+        // затемнение: слева под текст, снизу под ряды, сверху под панель; только поверх картинки
+        scrim.alpha = 0f
+        addView(scrim, Ui.frame(-1, -1))
+        scrim.addView(View(ctx).apply {
             background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
                 intArrayOf(0xF50A0908.toInt(), 0xD00A0908.toInt(), 0x400A0908, 0x000A0908))
         }, Ui.frame(-1, -1))
-        addView(View(ctx).apply {
+        scrim.addView(View(ctx).apply {
             background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
                 intArrayOf(0xFF0A0908.toInt(), 0xEB0A0908.toInt(), 0x590A0908, 0x000A0908, 0x000A0908))
         }, Ui.frame(-1, -1))
-        addView(View(ctx).apply {
+        scrim.addView(View(ctx).apply {
             background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xB30A0908.toInt(), 0x000A0908, 0x000A0908, 0x000A0908))
         }, Ui.frame(-1, -1))
     }
@@ -66,8 +69,12 @@ class Backdrop(ctx: Context) : FrameLayout(ctx) {
         val cur = layers[top]
         if (b == null) {
             cur.animate().alpha(0f).setDuration(600).start()
+            scrim.animate().alpha(0f).setDuration(600).start()
+            onImage?.invoke(false)
             return
         }
+        scrim.animate().alpha(1f).setDuration(600).start()
+        onImage?.invoke(true)
         next.setImageBitmap(b)
         next.animate().cancel()
         next.alpha = 0f

@@ -13,9 +13,8 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.xgimiru.player.files.FilesPane
+import com.xgimiru.player.files.NetworkPane
 import com.xgimiru.player.home.HomePane
-import com.xgimiru.player.torrents.TorrentsPane
-import com.xgimiru.player.tv.TvPane
 import com.xgimiru.player.ui.Backdrop
 import com.xgimiru.player.ui.Host
 import com.xgimiru.player.ui.Img
@@ -28,7 +27,7 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Lumen Play. Сверху логотип, разделы (Главная, ТВ, Торренты, Файлы), настройки и часы; под ними
+ * Lumen Play. Сверху логотип, разделы (Главная, Файлы, Сеть), настройки и часы; под ними
  * раздел. Раздел открывается, когда на нём фокус, как вкладки Lumen Home. Фон и блок описания
  * общие: их меняет раздел, когда двигается фокус.
  */
@@ -52,6 +51,7 @@ class MainActivity : Activity(), Host {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Ui.init(this)
+        window.setBackgroundDrawable(Ui.field())
         val d = { v: Number -> Ui.dp(this, v) }
         val root = FrameLayout(this)
         backdrop = Backdrop(this)
@@ -76,9 +76,8 @@ class MainActivity : Activity(), Host {
         setContentView(root)
 
         panes["home"] = HomePane(this, this) { tab -> select(tab, focusContent = true) }
-        panes["tv"] = TvPane(this, this)
-        panes["torrents"] = TorrentsPane(this, this)
         panes["files"] = FilesPane(this, this)
+        panes["network"] = NetworkPane(this, this)
         current = savedInstanceState?.getString("tab") ?: "home"
         select(current, focusContent = true, force = true)
         Img.trim(this)
@@ -93,8 +92,8 @@ class MainActivity : Activity(), Host {
         }
         bar.addView(ImageView(this).apply { setImageResource(R.drawable.ic_app) }, Ui.linear(d(30), d(30)).apply { rightMargin = d(10) })
         bar.addView(Ui.text(this, 19f, Ui.INK, Ui.bold()).apply { text = "Lumen Play" }, Ui.linear(-2, -2).apply { rightMargin = d(28) })
-        for ((key, label) in listOf("home" to tr("Главная", "Home"), "tv" to tr("ТВ", "TV"),
-                "torrents" to tr("Торренты", "Torrents"), "files" to tr("Файлы", "Files"))) {
+        for ((key, label) in listOf("home" to tr("Главная", "Home"), "files" to tr("Файлы", "Files"),
+                "network" to tr("Сеть", "Network"))) {
             val t = Ui.text(this, 16f, Ui.INK2, Ui.medium()).apply {
                 text = label
                 setPadding(d(16), d(7), d(16), d(7))
@@ -107,12 +106,17 @@ class MainActivity : Activity(), Host {
             bar.addView(t, Ui.linear(-2, -2).apply { rightMargin = d(4) })
         }
         bar.addView(View(this), Ui.linear(0, 1, 1f))
-        bar.addView(Ui.text(this, 18f, Ui.INK2, Ui.medium()).apply {
-            text = "⚙"
-            gravity = Gravity.CENTER
+        bar.addView(ImageView(this).apply {
+            val pad = d(9)
+            setPadding(pad, pad, pad, pad)
             isFocusable = true; isClickable = true
-            background = Ui.rounded(0, d(20).toFloat())
-            setOnFocusChangeListener { v, f -> v.background = Ui.rounded(if (f) Ui.INK else 0, d(20).toFloat()); setTextColor(if (f) Ui.GROUND else Ui.INK2) }
+            contentDescription = tr("Настройки", "Settings")
+            fun paint(f: Boolean) {
+                background = Ui.rounded(if (f) Ui.FOCUS else 0, d(20).toFloat())
+                setImageDrawable(Ui.icon(this@MainActivity, R.drawable.ic_settings, if (f) Ui.GROUND else Ui.INK2))
+            }
+            paint(false)
+            setOnFocusChangeListener { _, f -> paint(f) }
             setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
         }, Ui.linear(d(40), d(40)).apply { rightMargin = d(22) })
         clock = Ui.text(this, 28f, Ui.INK, Ui.serif())
@@ -123,8 +127,8 @@ class MainActivity : Activity(), Host {
     private fun paintTab(t: TextView, key: String, focused: Boolean) {
         val d = Ui.dp(this, 22).toFloat()
         t.background = when {
-            focused -> Ui.rounded(Ui.INK, d)
-            key == current -> Ui.rounded(0x26F4EFE6, d)
+            focused -> Ui.rounded(Ui.FOCUS, d)
+            key == current -> Ui.rounded(Ui.SOFT, d)
             else -> null
         }
         t.setTextColor(if (focused) Ui.GROUND else if (key == current) Ui.INK else Ui.INK2)
@@ -147,7 +151,8 @@ class MainActivity : Activity(), Host {
     private fun focusContent(): Boolean = panes[current]?.focusFirst() == true
 
     // ── Host ──
-    override fun backdrop(url: String?) = backdrop.show(url)
+    // светлая тема Lumen 2.0 — чистое поле без фоновых кадров (картинка есть на самих карточках)
+    override fun backdrop(url: String?) = backdrop.show(url.takeIf { Ui.dark })
     override fun info(eyebrow: String?, title: String?, meta: String?, desc: String?, progress: Float) =
         info.set(eyebrow, title, meta, desc, progress)
 
@@ -170,10 +175,6 @@ class MainActivity : Activity(), Host {
         val testUrl = intent.getStringExtra("update_url")
         if (testUrl != null) Updater.setTestUrl(this, testUrl)
         if (!updating) Updater.check(this, testUrl != null) { showUpdate(it) }
-        // встроенный движок для Лампы: поднять, если ещё не работает (после обновления и т. п.)
-        if (TorrSettings.shared(this)) TorrService.hold(this, TorrService.SHARED)
-        // DLNA: Lumen Play виден телефонам как телевизор (если не выключено в настройках)
-        com.xgimiru.player.dlna.DlnaService.sync(this)
     }
 
     override fun onPause() {
@@ -193,7 +194,7 @@ class MainActivity : Activity(), Host {
     private fun showUpdate(i: Updater.Info?) {
         updateInfo = i
         if (i == null) { update.visibility = View.GONE; return }
-        update.text = tr("Доступна версия ${i.versionName}. OK — обновить", "Version ${i.versionName} is available. OK to update")
+        update.text = tr("Есть версия ${i.versionName}. OK: обновить", "Version ${i.versionName} is available. OK to update")
         update.visibility = View.VISIBLE
     }
 
@@ -206,7 +207,7 @@ class MainActivity : Activity(), Host {
             progress = { update.text = tr("Скачиваю версию ${i.versionName}: $it%", "Downloading version ${i.versionName}: $it%") },
             fail = {
                 updating = false
-                update.text = tr("Не получилось обновить: $it. OK — ещё раз", "Update failed: $it. OK to retry")
+                update.text = tr("Не получилось обновить: $it. OK: ещё раз", "Update failed: $it. OK to retry")
             })
     }
 }

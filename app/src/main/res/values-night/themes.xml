@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Kino" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/field</item>
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowAnimationStyle">@android:style/Animation.Activity</item>
+        <item name="android:defaultFocusHighlightEnabled">false</item>
+    </style>
+    <style name="Kino.Player">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowFullscreen">true</item>
+    </style>
+    <style name="Lumen.Dialog" parent="android:Theme.Material.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/dialog_bg</item>
+        <item name="android:colorAccent">#FF6E9BF2</item>
+        <item name="android:textColorPrimary">#FFF2F4F7</item>
+        <item name="android:textColorSecondary">#FFB9BFC9</item>
+        <item name="android:textColorHint">#FF8E95A1</item>
+        <item name="android:colorControlNormal">#FF8E95A1</item>
+        <item name="android:colorControlActivated">#FF6E9BF2</item>
+        <item name="android:colorBackground">#FF1E2128</item>
+        <item name="android:buttonBarButtonStyle">@style/Lumen.DialogButton</item>
+        <item name="android:defaultFocusHighlightEnabled">false</item>
+    </style>
+    <style name="Lumen.DialogButton" parent="android:Widget.Material.Button.Borderless.Colored">
+        <item name="android:textColor">@color/dialog_button_text</item>
+        <item name="android:background">@drawable/dialog_button_bg</item>
+        <item name="android:paddingLeft">18dp</item>
+        <item name="android:paddingRight">18dp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textSize">17sp</item>
+    </style>
+</resources>

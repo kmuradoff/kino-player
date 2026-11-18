@@ -19,7 +19,7 @@ import android.widget.TextView
 import com.xgimiru.player.History
 import com.xgimiru.player.PlayerActivity
 import com.xgimiru.player.Time
-import com.xgimiru.player.TorrentActivity
+import com.xgimiru.player.R
 import com.xgimiru.player.ui.Host
 import com.xgimiru.player.ui.Pane
 import com.xgimiru.player.ui.Ui
@@ -30,7 +30,7 @@ import java.util.Locale
 
 /**
  * Файлы: слева места (флешки, память), справа содержимое папки. Только то, что можно открыть:
- * папки, видео, музыка, .torrent. Видео открывается в плеере с того места, где остановились,
+ * папки, видео, музыка. Видео открывается в плеере с того места, где остановились,
  * а остальные серии папки идут следом.
  */
 class FilesPane(private val act: Activity, private val host: Host) : Pane {
@@ -78,7 +78,7 @@ class FilesPane(private val act: Activity, private val host: Host) : Pane {
         val row = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL; setPadding(d(40), d(8), d(56), d(24)) }
         placeList.apply {
             divider = null
-            selector = Ui.rounded(0x26F4EFE6, d(12).toFloat())
+            selector = Ui.rounded(Ui.withAlpha(Ui.INK, 0x24), d(12).toFloat())
             adapter = simple({ places.size }, { p -> places[p].first }, { p -> if (places[p].second == base) Ui.INK else Ui.INK3 })
             setOnItemClickListener { _, _, p, _ -> open(places[p].second, isBase = true); fileList.requestFocus() }
             setOnKeyListener { _, code, ev -> if (ev.action == KeyEvent.ACTION_DOWN && code == KeyEvent.KEYCODE_DPAD_RIGHT) { fileList.requestFocus(); true } else false }
@@ -88,7 +88,7 @@ class FilesPane(private val act: Activity, private val host: Host) : Pane {
         col.addView(path, Ui.linear(-1, -2).apply { leftMargin = d(18); bottomMargin = d(8) })
         fileList.apply {
             divider = null
-            selector = Ui.rounded(0x2EF4EFE6, d(12).toFloat())
+            selector = Ui.rounded(Ui.withAlpha(Ui.INK, 0x24), d(12).toFloat())
             isVerticalScrollBarEnabled = false
             adapter = FileAdapter()
             setOnItemClickListener { _, _, p, _ -> click(entries[p]) }
@@ -119,7 +119,6 @@ class FilesPane(private val act: Activity, private val host: Host) : Pane {
         return when {
             ext in VIDEO -> "video"
             ext in AUDIO -> "audio"
-            ext == "torrent" -> "torrent"
             else -> null
         }
     }
@@ -127,7 +126,6 @@ class FilesPane(private val act: Activity, private val host: Host) : Pane {
     private fun click(f: File) {
         if (f.isDirectory) { open(f); return }
         when (kind(f)) {
-            "torrent" -> act.startActivity(Intent(act, TorrentActivity::class.java).setData(Uri.fromFile(f)))
             else -> {
                 // вся папка — плейлист: следующая серия включится сама
                 val same = entries.filter { !it.isDirectory && kind(it) == kind(f) }
@@ -148,21 +146,28 @@ class FilesPane(private val act: Activity, private val host: Host) : Pane {
             val row = (c as? LinearLayout) ?: LinearLayout(act).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
                 setPadding(d(18), d(12), d(20), d(12)); layoutParams = AbsListView.LayoutParams(-1, -2)
-                addView(Ui.text(act, 18f, Ui.INK3, Ui.medium()).apply { gravity = Gravity.CENTER }, Ui.linear(d(32), -2).apply { rightMargin = d(14) })
+                addView(android.widget.ImageView(act), Ui.linear(d(24), d(24)).apply { rightMargin = d(16); leftMargin = d(4) })
                 addView(Ui.text(act, 18f, Ui.INK, Ui.medium()), Ui.linear(0, -2, 1f))
                 addView(Ui.text(act, 14f, Ui.INK3))
             }
             val f = entries[p]
-            (row.getChildAt(0) as TextView).text = when { f.isDirectory -> "▸"; kind(f) == "audio" -> "♪"; kind(f) == "torrent" -> "⇣"; else -> "▶" }
+            (row.getChildAt(0) as android.widget.ImageView).setImageDrawable(Ui.icon(act,
+                when { f.isDirectory -> R.drawable.ic_folder; kind(f) == "audio" -> R.drawable.ic_music_note; else -> R.drawable.ic_movie }, Ui.INK3))
             (row.getChildAt(1) as TextView).text = f.name
             (row.getChildAt(2) as TextView).text = when {
                 f.isDirectory -> ""
                 else -> History.get(act, History.key(Uri.fromFile(f)))?.takeIf { !it.finished }?.let {
                     tr("осталось ", "") + Time.human(it.duration - it.position) + tr("", " left")
-                } ?: com.xgimiru.player.torrents.Torznab.human(f.length())
+                } ?: human(f.length())
             }
             return row
         }
+    }
+
+    private fun human(b: Long): String = when {
+        b >= 1L shl 30 -> String.format(Locale.getDefault(), tr("%.1f ГБ", "%.1f GB"), b / (1L shl 30).toDouble())
+        b >= 1L shl 20 -> String.format(Locale.getDefault(), tr("%.0f МБ", "%.0f MB"), b / (1L shl 20).toDouble())
+        else -> String.format(Locale.getDefault(), tr("%d КБ", "%d KB"), b / 1024)
     }
 
     private fun simple(count: () -> Int, label: (Int) -> String, color: (Int) -> Int) = object : BaseAdapter() {

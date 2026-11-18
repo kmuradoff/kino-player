@@ -1,6 +1,7 @@
 package com.xgimiru.player.ui
 
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -13,39 +14,71 @@ import android.widget.LinearLayout
 import android.widget.TextView
 
 /**
- * Оформление Lumen Play: те же шрифты и тёплая тёмная палитра, что у Lumen Home (Prata для крупных
- * заголовков, Onest для всего остального). Размеры в dp рассчитаны на экран 1920x1080 при плотности 2
- * (проекторы и приставки), на других экранах масштабируются сами.
+ * Оформление Lumen Play в стиле Lumen 2.0: шрифт Inter, светлая или тёмная тема по системе (нейтральная
+ * светлая: серое поле, белые плитки, тёмный текст). Размеры в dp рассчитаны на 1920x1080 при плотности 2.
  */
 object Ui {
-    const val GROUND = 0xFF0A0908.toInt()
-    const val INK = 0xFFF4EFE6.toInt()
-    const val INK2 = 0xFFC9C1B4.toInt()
-    const val INK3 = 0xFF8E867A.toInt()
-    const val ACCENT = 0xFFF2B26B.toInt()
-    const val CARD = 0xFF1C1A17.toInt()
-    const val CARD_HI = 0xFF2A2622.toInt()
-    const val LINE = 0x24F4EFE6
+    var dark = true; private set
+    /** Поле экрана, плитки, панели. */
+    var BG = 0; private set
+    var BG_GLOW = 0; private set
+    var BG_LOW = 0; private set
+    var SURFACE = 0; private set
+    var SURFACE2 = 0; private set
+    var PANEL = 0; private set
+    var LINE = 0; private set
+    /** Текст: заголовки, описания, подписи. */
+    var INK = 0; private set
+    var INK2 = 0; private set
+    var INK3 = 0; private set
+    /** Заливка фокуса и текст на ней. */
+    var FOCUS = 0; private set
+    var GROUND = 0; private set
+    var ACCENT = 0; private set
+    var RING = 0; private set
+    var PROGRESS = 0; private set
+    /** Лёгкая подложка выбранного (вкладка, место в списке). */
+    var SOFT = 0; private set
+    val CARD get() = SURFACE
+    val CARD_HI get() = SURFACE2
 
-    private var prata: Typeface? = null
-    private var onest: Typeface? = null
-    private var onestMedium: Typeface? = null
-    private var onestBold: Typeface? = null
+    private var inter: Typeface? = null
+    private var interMedium: Typeface? = null
+    private var interSemi: Typeface? = null
+    private var interBold: Typeface? = null
 
     fun init(ctx: Context) {
-        if (onest != null) return
-        val am = ctx.assets
-        prata = runCatching { Typeface.createFromAsset(am, "fonts/Prata-Regular.ttf") }.getOrNull()
-        val base = runCatching { Typeface.createFromAsset(am, "fonts/Onest-Variable.ttf") }.getOrNull()
-        onest = base?.let { Typeface.create(it, 420, false) } ?: Typeface.DEFAULT
-        onestMedium = base?.let { Typeface.create(it, 560, false) } ?: Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        onestBold = base?.let { Typeface.create(it, 660, false) } ?: Typeface.DEFAULT_BOLD
+        dark = (ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) != Configuration.UI_MODE_NIGHT_NO
+        if (dark) palette(0xFF0E1014, 0xFF161A21, 0xFF0B0C10, 0xFF1B1E25, 0xFF242830, 0xFF1E2128, 0xFF2E333C,
+            0xFFF2F4F7, 0xFFB9BFC9, 0xFF8E95A1, 0xFFF2F4F7, 0xFF0E1014, 0xFF6E9BF2, 0xFFFFFFFF, 0xFFFFFFFF, 0x1FF2F4F7)
+        else palette(0xFFE9EBEF, 0xFFF4F5F8, 0xFFE1E4EA, 0xFFFFFFFF, 0xFFF6F7F9, 0xFFFFFFFF, 0xFFE3E6EC,
+            0xFF12151B, 0xFF424955, 0xFF5B6270, 0xFF12151B, 0xFFFFFFFF, 0xFF2A5CC4, 0xFF12151B, 0xFF3B78E7, 0x1A12151B)
+        if (inter != null) return
+        val base = runCatching { Typeface.createFromAsset(ctx.assets, "fonts/InterVariable.ttf") }.getOrNull()
+        inter = base?.let { Typeface.create(it, 400, false) } ?: Typeface.DEFAULT
+        interMedium = base?.let { Typeface.create(it, 500, false) } ?: Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        interSemi = base?.let { Typeface.create(it, 600, false) } ?: Typeface.DEFAULT_BOLD
+        interBold = base?.let { Typeface.create(it, 700, false) } ?: Typeface.DEFAULT_BOLD
     }
 
-    fun serif(): Typeface = prata ?: Typeface.SERIF
-    fun sans(): Typeface = onest ?: Typeface.DEFAULT
-    fun medium(): Typeface = onestMedium ?: Typeface.DEFAULT_BOLD
-    fun bold(): Typeface = onestBold ?: Typeface.DEFAULT_BOLD
+    private fun palette(vararg c: Long) {
+        val v = c.map { it.toInt() }
+        BG = v[0]; BG_GLOW = v[1]; BG_LOW = v[2]; SURFACE = v[3]; SURFACE2 = v[4]; PANEL = v[5]; LINE = v[6]
+        INK = v[7]; INK2 = v[8]; INK3 = v[9]; FOCUS = v[10]; GROUND = v[11]; ACCENT = v[12]; RING = v[13]; PROGRESS = v[14]; SOFT = v[15]
+    }
+
+    /** Крупные заголовки: Inter полужирный (Lumen 2.0 без засечек). */
+    fun serif(): Typeface = interSemi ?: Typeface.DEFAULT_BOLD
+    fun sans(): Typeface = inter ?: Typeface.DEFAULT
+    fun medium(): Typeface = interMedium ?: Typeface.DEFAULT_BOLD
+    fun bold(): Typeface = interBold ?: Typeface.DEFAULT_BOLD
+
+    /** Поле экрана: свет в правом верхнем углу, как у Lumen Home. */
+    fun field(): GradientDrawable = GradientDrawable(GradientDrawable.Orientation.TR_BL, intArrayOf(BG_GLOW, BG, BG_LOW))
+
+    /** Значок Material Symbols нужного цвета. */
+    fun icon(ctx: Context, res: Int, color: Int): android.graphics.drawable.Drawable =
+        ctx.getDrawable(res)!!.mutate().apply { setTint(color) }
 
     fun dp(ctx: Context, v: Number): Int = (v.toFloat() * ctx.resources.displayMetrics.density + 0.5f).toInt()
 
@@ -77,7 +110,7 @@ object Ui {
         isClickable = true
         val r = dp(ctx, 30).toFloat()
         fun paint(f: Boolean) {
-            background = rounded(if (f) INK else 0x24F4EFE6, r)
+            background = rounded(if (f) FOCUS else SOFT, r)
             setTextColor(if (f) GROUND else INK)
         }
         paint(false)

@@ -6,15 +6,9 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
-    <!-- встроенный торрент-движок (TorrService) и его запуск при включении в режиме для Лампы -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- DLNA-рендерер (dlna/DlnaService): поиск SSDP по Wi-Fi, смена сети, открытие плеера из фона -->
+    <!-- папки в сети: поиск серверов SMB, DLNA и mDNS в локальной сети (libVLC) -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- «Продолжить просмотр» лаунчера: свои строки WatchNextPrograms -->
     <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />
 
@@ -40,7 +34,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Сам плеер: его выбирают Лампа, TorrServe и любые приложения с видео -->
+        <!-- Сам плеер: его выбирают файловые менеджеры и любые приложения с видео -->
         <activity
             android:name=".PlayerActivity"
             android:exported="true"
@@ -55,6 +49,8 @@
                 <data android:scheme="https" />
                 <data android:scheme="file" />
                 <data android:scheme="content" />
+                <data android:scheme="smb" />
+                <data android:scheme="nfs" />
                 <data android:mimeType="video/*" />
             </intent-filter>
             <intent-filter>
@@ -71,74 +67,7 @@
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
         </activity>
-        <!-- страница фильма с раздачами и источники поиска торрентов -->
-        <activity android:name=".torrents.FilmActivity" android:exported="false" />
-        <activity android:name=".torrents.SourcesActivity" android:exported="false"
-            android:windowSoftInputMode="adjustPan" />
-        <!-- magnet-ссылки и .torrent-файлы: встроенный движок или внешний TorrServe -->
-        <activity
-            android:name=".TorrentActivity"
-            android:exported="true"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation|smallestScreenSize|uiMode">
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="magnet" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="http" />
-                <data android:scheme="https" />
-                <data android:scheme="file" />
-                <data android:scheme="content" />
-                <data android:mimeType="application/x-bittorrent" />
-            </intent-filter>
-            <!-- файлы .torrent, у которых нет своего MIME-типа -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="file" />
-                <data android:scheme="content" />
-                <data android:host="*" />
-                <data android:pathPattern=".*\\.torrent" />
-                <data android:pathPattern=".*\\..*\\.torrent" />
-                <data android:pathPattern=".*\\..*\\..*\\.torrent" />
-            </intent-filter>
-        </activity>
-
         <activity android:name=".SettingsActivity" android:exported="false" />
-        <activity android:name=".tv.LiveActivity" android:exported="false" android:launchMode="singleTask"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation|smallestScreenSize|uiMode"
-            android:theme="@style/Kino.Player" />
-
-        <service
-            android:name=".TorrService"
-            android:exported="false"
-            android:foregroundServiceType="mediaPlayback" />
-        <receiver android:name=".TorrService$Boot" android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-            </intent-filter>
-        </receiver>
-
-        <!-- DLNA: телефоны и компьютеры видят Lumen Play как телевизор -->
-        <service
-            android:name=".dlna.DlnaService"
-            android:exported="false"
-            android:foregroundServiceType="connectedDevice" />
-        <receiver android:name=".dlna.DlnaService$Boot" android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <!-- после обновления Lumen Play приёмник видео поднимается сам, без открытия приложения -->
-                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-            </intent-filter>
-        </receiver>
-        <activity android:name=".dlna.ImageActivity" android:exported="false" android:launchMode="singleTop"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation|smallestScreenSize|uiMode"
-            android:theme="@style/Kino.Player" />
 
         <!-- ответ системного установщика на обновление «Кино» (Updater) -->
         <receiver android:name=".Updater$Done" android:exported="false" />

@@ -5,7 +5,7 @@ import android.net.Uri
 /**
  * Движок воспроизведения. Интерфейс «Кино» один, движков два:
  *  - [ExoEngine] (Media3) — современные MKV/MP4/TS: правильный Dolby Vision и плавный 4K HDR;
- *  - [VlcEngine] (libVLC) — старьё вроде AVI/XviD и запасной вариант, если Media3 не справился.
+ *  - [VlcEngine] (libVLC) — старьё вроде AVI/XviD, сетевые папки (SMB, NFS, FTP) и запасной вариант.
  */
 interface Engine {
 
@@ -61,13 +61,25 @@ interface Engine {
     /** 0 — целиком, 1 — заполнить с обрезкой, 2 — растянуть. */
     fun setScale(mode: Int)
 
+    /** Соотношение сторон из настроек: "auto", "16:9", "2.35"... */
+    fun setAspect(value: String) {}
+    /** Задержка звука, мс: плюс — звук позже. */
+    fun setAudioDelay(ms: Int) {}
+    /** Задержка субтитров, мс: плюс — позже. */
+    fun setSubtitleDelay(ms: Int) {}
+    /** Кодировка внешних субтитров для движка, который читает их сам (VLC). null — как решит движок. */
+    fun setSubtitleEncoding(charset: String?) {}
+
     fun release()
 
     companion object {
         /** Форматы, которые Media3 играет плохо или не играет вовсе. */
-        private val LEGACY = setOf("avi", "divx", "wmv", "asf", "flv", "vob", "mpg", "mpeg", "rm", "rmvb", "3gp", "ogm")
+        val LEGACY = setOf("avi", "divx", "wmv", "asf", "flv", "vob", "mpg", "mpeg", "rm", "rmvb", "3gp", "ogm")
 
-        fun prefersVlc(uri: Uri): Boolean =
+        /** Сетевые папки, которые умеет только libVLC. */
+        val VLC_SCHEMES = setOf("smb", "nfs", "ftp", "ftps", "sftp")
+
+        fun prefersVlc(uri: Uri): Boolean = uri.scheme?.lowercase() in VLC_SCHEMES ||
             uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase() in LEGACY
     }
 }

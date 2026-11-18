@@ -7,7 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.LruCache
 import android.widget.ImageView
-import com.xgimiru.player.tv.Net
+import com.xgimiru.player.net.Net
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.Executors

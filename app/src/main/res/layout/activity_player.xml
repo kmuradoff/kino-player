@@ -160,7 +160,7 @@
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:gravity="end"
-                    android:text="▼  звук · субтитры · экран"
+                    android:text="Вниз: звук, субтитры, экран"
                     android:textColor="@color/text_faint"
                     android:textSize="15sp" />
             </LinearLayout>
@@ -291,7 +291,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
-            android:text="OK — смотреть сейчас   ·   Назад — скрыть"
+            android:text="OK: смотреть сейчас.  Назад: скрыть"
             android:textColor="@color/text_faint"
             android:textSize="14sp" />
     </LinearLayout>
@@ -327,7 +327,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="18dp"
-            android:text="OK — попробовать ещё раз   ·   Назад — выйти"
+            android:text="OK: попробовать ещё раз.  Назад: выйти"
             android:textColor="@color/text_faint"
             android:textSize="14sp" />
     </LinearLayout>

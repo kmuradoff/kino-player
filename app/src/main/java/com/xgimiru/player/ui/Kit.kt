@@ -46,7 +46,7 @@ class Card(ctx: Context, wDp: Int, hDp: Int, logo: Boolean = false) : FrameLayou
     init {
         val d = { v: Number -> Ui.dp(ctx, v) }
         layoutParams = LinearLayout.LayoutParams(d(wDp), d(hDp)).apply { rightMargin = d(18) }
-        background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF3A2A1E.toInt(), 0xFF1C1A17.toInt())).apply { cornerRadius = r }
+        background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF3A4252.toInt(), 0xFF1B1E25.toInt())).apply { cornerRadius = r }
         clipToOutline = true
         outlineProvider = object : ViewOutlineProvider() {
             override fun getOutline(v: View, o: Outline) = o.setRoundRect(0, 0, v.width, v.height, r)
@@ -58,11 +58,11 @@ class Card(ctx: Context, wDp: Int, hDp: Int, logo: Boolean = false) : FrameLayou
             background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(0xE6000000.toInt(), 0x00000000, 0x00000000))
         }, Ui.frame(-1, -1))
         val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(d(14), 0, d(14), d(12)) }
-        label = Ui.text(ctx, if (logo) 14f else 16f, Ui.INK, Ui.medium())
-        sub = Ui.text(ctx, 12f, Ui.INK2)
+        label = Ui.text(ctx, if (logo) 14f else 16f, ON_IMAGE, Ui.medium())
+        sub = Ui.text(ctx, 12f, ON_IMAGE2)
         col.addView(label); col.addView(sub, Ui.linear(-1, -2).apply { topMargin = d(2) })
         barBox.background = Ui.rounded(0x40000000, d(2).toFloat())
-        bar.background = Ui.rounded(Ui.ACCENT, d(2).toFloat())
+        bar.background = Ui.rounded(0xFFFFFFFF.toInt(), d(2).toFloat())
         barBox.addView(bar, Ui.frame(0, -1))
         barBox.visibility = GONE
         col.addView(barBox, Ui.linear(-1, d(4)).apply { topMargin = d(8) })
@@ -72,7 +72,7 @@ class Card(ctx: Context, wDp: Int, hDp: Int, logo: Boolean = false) : FrameLayou
         isClickable = true
         foreground = GradientDrawable().apply { cornerRadius = r; setStroke(0, 0) }
         setOnFocusChangeListener { _, f ->
-            (foreground as GradientDrawable).setStroke(if (f) d(3) else 0, Ui.INK)
+            (foreground as GradientDrawable).setStroke(if (f) d(3) else 0, Ui.RING)
             animate().scaleX(if (f) 1.07f else 1f).scaleY(if (f) 1.07f else 1f).translationZ(if (f) 10f else 0f).setDuration(160).start()
             onFocus?.invoke(f)
             if (f) onRow?.invoke()
@@ -116,6 +116,10 @@ class Row(ctx: Context, title: String) : LinearLayout(ctx) {
     fun first(): View? = strip.getChildAt(0)
 }
 
+/** Текст на картинке под тёмным затемнением: светлый в обеих темах. */
+const val ON_IMAGE = 0xFFF2F4F7.toInt()
+const val ON_IMAGE2 = 0xFFD5D9E0.toInt()
+
 /** Блок описания слева сверху: надпись, крупное название, строка с прогрессом, описание. */
 class Info(ctx: Context) : LinearLayout(ctx) {
     private val eyebrow = Ui.text(ctx, 13f, Ui.INK2, Ui.bold()).apply { letterSpacing = 0.16f }
@@ -133,13 +137,20 @@ class Info(ctx: Context) : LinearLayout(ctx) {
         addView(title, Ui.linear(-1, -2).apply { topMargin = d(10); bottomMargin = d(10) })
         metaRow.orientation = HORIZONTAL
         metaRow.gravity = Gravity.CENTER_VERTICAL
-        barBox.background = Ui.rounded(0x33F4EFE6, d(2).toFloat())
-        bar.background = Ui.rounded(Ui.ACCENT, d(2).toFloat())
+        barBox.background = Ui.rounded(Ui.withAlpha(Ui.INK3, 0x55), d(2).toFloat())
+        bar.background = Ui.rounded(Ui.PROGRESS, d(2).toFloat())
         barBox.addView(bar, Ui.frame(0, -1))
         metaRow.addView(barBox, Ui.linear(d(110), d(3)).apply { rightMargin = d(12) })
         metaRow.addView(meta)
         addView(metaRow, Ui.linear(-1, -2).apply { bottomMargin = d(10) })
         addView(desc, Ui.linear(d(440), -2))
+    }
+
+    /** Над картинкой текст светлый, над пустым полем цвета темы. */
+    fun onImage(image: Boolean) {
+        val a = if (image) ON_IMAGE else Ui.INK
+        val b = if (image) ON_IMAGE2 else Ui.INK2
+        title.setTextColor(a); eyebrow.setTextColor(b); meta.setTextColor(b); desc.setTextColor(b)
     }
 
     fun set(e: String?, t: String?, m: String?, ds: String?, progress: Float) {

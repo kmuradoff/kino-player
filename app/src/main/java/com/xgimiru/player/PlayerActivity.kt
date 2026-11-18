@@ -20,15 +20,22 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
-import com.xgimiru.player.dlna.PlayerBridge
+import com.xgimiru.player.net.NetShares
+import com.xgimiru.player.settings.K
+import com.xgimiru.player.settings.Settings
+import com.xgimiru.player.settings.Stepper
+import com.xgimiru.player.settings.playerSettings
+import com.xgimiru.player.ui.tr
+import android.app.AlertDialog
+import android.graphics.drawable.GradientDrawable
 
 /**
- * Плеер «Кино». Интерфейс свой, движков два (см. [Engine]): Media3 для современных
- * форматов и Dolby Vision, VLC для старья и как запасной. Понимает параметры, которые
- * Лампа и другие приложения передают внешним плеерам (MX Player / VLC), и возвращает,
- * где остановились.
+ * Плеер Lumen Play. Интерфейс свой, движков два (см. [Engine]): Media3 для современных форматов и
+ * Dolby Vision, VLC для старья, сетевых папок и как запасной. Понимает параметры, которые другие
+ * приложения передают внешним плеерам (MX Player, VLC), и возвращает, где остановились.
+ * Поведение задают настройки плеера ([K]): перемотка, кнопки, продолжение, звук, субтитры.
  */
-class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
+class PlayerActivity : Activity(), Engine.Listener {
 
     private data class Item(val uri: Uri, val title: String, val subs: List<Uri>)
 
@@ -79,16 +86,15 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
     private var nextDismissed = false
     private var resumedFrom: Long? = null
     private var lastSave = 0L
-    private var torrentStat: TorrServe.Stat? = null
+    private lateinit var cfg: Settings
+    /** Задержки этого сеанса: из настроек, меняются в панели (только до выхода). */
+    private var audioDelay = 0
+    private var subDelay = 0
     private var completed = false
     private var paused = false          // пауза по нашей команде (а не буферизация)
     private var loading = false
     private var loadingPct = -1
     private var fellBack = false        // уже переключались на запасной движок для этого файла
-    private var ownTorrents = false     // в списке есть видео со встроенного торрент-движка
-    private var engineRestarted = false // перезапускали встроенный движок после сбоя этого файла
-    private var torrRetries = 0         // повторы торрента, который не успел подгрузиться
-    private var torrRetryIndex = -1
     private var startFrom = 0L          // с какой позиции открывали текущий файл (для «попробовать ещё раз»)
     private var chapters: List<Chapters.Chapter> = emptyList()  // главы текущего файла: где титры
     private var chaptersOf: Uri? = null // чьи главы прочитаны или читаются
@@ -98,6 +104,9 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        cfg = playerSettings()
+        audioDelay = cfg.int(K.AUDIO_DELAY)
+        subDelay = cfg.int(K.SUB_DELAY)
         setContentView(R.layout.activity_player)
         bindViews()
         startSession()
@@ -114,7 +123,6 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
 
     override fun onStart() {
         super.onStart()
-        if (ownTorrents) TorrService.hold(this, HOLD)
         // вернулись после сна или из другого приложения: открываем видео заново с того же места, на паузе
         stoppedAt?.let { pos ->
             stoppedAt = null
@@ -145,15 +153,11 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
                 engine = null
             }
         }
-        // встроенный торрент-движок остановится, если не вернуться к фильму за полторы минуты
-        if (ownTorrents) TorrService.release(this, HOLD)
     }
 
     override fun onDestroy() {
         session?.release()
         session = null
-        PlayerBridge.detach(this, completed)
-        if (ownTorrents) TorrService.release(this, HOLD)
         handler.removeCallbacksAndMessages(null)
         io.shutdownNow()
         engine?.release()
@@ -187,6 +191,8 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         errorText = findViewById(R.id.errorText)
         panel = findViewById(R.id.panel)
         panelList = findViewById(R.id.panelList)
+        net.visibility = View.GONE
+        findViewById<TextView>(R.id.hint).text = tr("Вниз: звук, субтитры, экран", "Down: audio, subtitles, picture")
     }
 
     private fun prefs() = getSharedPreferences("player", MODE_PRIVATE)
@@ -194,7 +200,6 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
     // ── Открытие ─────────────────────────────────────────────────────────────
     private fun open(intent: Intent) {
         val uri = intent.data ?: run { finish(); return }
-        PlayerBridge.attach(this)
         val baseTitle = intent.getStringExtra("title") ?: intent.getStringExtra("forcename")
             ?: intent.getStringExtra("name") ?: Formats.titleFromPath(uri.lastPathSegment ?: uri.path)
 
@@ -203,7 +208,7 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         @Suppress("DEPRECATION")
         val list = intent.getParcelableArrayExtra("video_list")?.mapNotNull { it as? Uri }.orEmpty()
         val names = intent.getStringArrayExtra("video_list.name")
-        // субтитры каждой серии (так передаёт TorrentActivity): по строке на серию, ссылки через \n
+        // субтитры каждой серии (так передаёт папка в сети): по строке на серию, ссылки через \n
         val listSubs = intent.getStringArrayExtra("video_list.subs")
         headers = readHeaders(intent)
         streamUri = uri
@@ -217,21 +222,33 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
                 Item(u, names?.getOrNull(i) ?: Formats.titleFromPath(u.lastPathSegment), itemSubs ?: if (u == uri) subs else emptyList())
             }.also { rememberPlaylist(it) }
         } else restorePlaylist(uri, subs) ?: listOf(Item(uri, baseTitle, subs))
-        val own = items.any { TorrEngine.isOwn(it.uri) }
-        if (own) TorrService.hold(this, HOLD) else if (ownTorrents) TorrService.release(this, HOLD)
-        ownTorrents = own
-
         @Suppress("DEPRECATION")
         val explicit = (intent.extras?.get("position") as? Number)?.toLong()
             ?: (intent.extras?.get("extra_position") as? Number)?.toLong()
+        val saved = savedPosition(items[index]) ?: 0L
+        val fromStart = intent.getBooleanExtra("from_start", false)
+        val mode = cfg.string(K.RESUME)
+        if (!fromStart && (explicit == null || explicit <= 0) && saved > 0 && mode == "ask") { askResume(saved); return }
         val startPos = when {
-            intent.getBooleanExtra("from_start", false) -> 0L
+            fromStart -> 0L
             explicit != null && explicit > 0 -> explicit
-            else -> savedPosition(items[index]) ?: 0L
+            mode == "start" -> 0L
+            else -> saved
         }
         resumedFrom = startPos.takeIf { it > 0 && explicit == null }
         play(index, startPos)
-        resumedFrom?.let { showToast("Продолжаем с ${Time.format(it)}", "▲ — смотреть с начала", 5000) }
+        resumedFrom?.let { showToast(tr("Продолжаем с ${Time.format(it)}", "Resuming from ${Time.format(it)}"),
+            tr("Вверх: смотреть с начала", "Up: watch from the start"), 5000) }
+    }
+
+    /** «Спрашивать»: продолжить или с начала, до запуска видео. */
+    private fun askResume(pos: Long) {
+        AlertDialog.Builder(this, R.style.Lumen_Dialog)
+            .setTitle(current()?.title)
+            .setPositiveButton(tr("Продолжить с ${Time.format(pos)}", "Resume from ${Time.format(pos)}")) { _, _ -> play(index, pos) }
+            .setNegativeButton(tr("С начала", "From the start")) { _, _ -> play(index, 0) }
+            .setOnCancelListener { finishWithResult() }
+            .show()
     }
 
     private fun readHeaders(intent: Intent): Map<String, String> = runCatching {
@@ -268,60 +285,38 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
     private fun play(i: Int, startMs: Long, forceVlc: Boolean = false) {
         index = i
         startFrom = startMs
-        if (TorrEngine.isOwn(items[i].uri) && !(TorrEngine.isRunning && items[i].uri.port == TorrEngine.port)) {
-            startTorrEngine(i, startMs, forceVlc)
-            return
-        }
         val item = items[i]
         completed = false
         nextDismissed = false
         if (item.uri != chaptersOf) { chapters = emptyList(); chaptersOf = null }
         handler.removeCallbacks(loadChapters)
-        if (i + 1 < items.size) handler.postDelayed(loadChapters, 5000)   // когда фильм уже пошёл
+        if (i + 1 < items.size && cfg.bool(K.AUTO_NEXT)) handler.postDelayed(loadChapters, 5000)   // когда фильм уже пошёл
         paused = false
         if (!forceVlc) fellBack = false
         error.visibility = View.GONE
         next.visibility = View.GONE
         badge.hide()
 
-        val wantVlc = forceVlc || Engine.prefersVlc(item.uri)
+        val wantVlc = forceVlc || cfg.string(K.ENGINE) == "vlc" || Engine.prefersVlc(item.uri)
         if (engine == null || engineIsVlc != wantVlc) {
             engine?.release()
-            engine = if (wantVlc) VlcEngine(this, video, this) else ExoEngine(this, video, this)
+            engine = if (wantVlc) VlcEngine(this, video, this, cfg) else ExoEngine(this, video, this, cfg)
             engineIsVlc = wantVlc
-            engine!!.setScale(prefs().getInt("scaleMode", 0))
+            engine!!.setScale(cfg.scale)
+            engine!!.setAspect(cfg.string(K.ASPECT))
         }
-        engine!!.setRequest(headers, streamType.takeIf { item.uri == streamUri })
-        engine!!.open(item.uri, startMs, item.subs)
+        val e = engine!!
+        val subs = SubPrep.prepare(this, item.uri, item.subs, cfg, wantVlc, subDelay)
+        e.setRequest(headers, streamType.takeIf { item.uri == streamUri })
+        e.setSubtitleEncoding(subs.charset)
+        e.setAudioDelay(audioDelay)
+        e.setSubtitleDelay(subDelay)
+        e.open(NetShares.authorize(this, item.uri), startMs, subs.subs)
+        if (cfg.string(K.SPEED) == "last") prefs().getFloat("lastSpeed", 1f).takeIf { it != 1f }?.let { e.speed = it }
 
         showTitles()
-        showControls(4000)
+        showControls(cfg.osdTimeoutMs)
         onBuffering(true, -1)
-    }
-
-    /**
-     * Встроенный движок не запущен (остановился, пока фильм стоял в фоне) или порт в ссылке от
-     * прошлого запуска: запустить движок, подставить порт во все его ссылки и играть.
-     */
-    private fun startTorrEngine(i: Int, startMs: Long, forceVlc: Boolean) {
-        error.visibility = View.GONE
-        showTitles()
-        onBuffering(true, -1)
-        io.execute {
-            val r = runCatching { TorrEngine.start(this) }
-            handler.post {
-                if (isFinishing || isDestroyed) return@post
-                r.onSuccess {
-                    fun fix(u: Uri) = if (TorrEngine.isOwn(u)) TorrEngine.rebase(u) else u
-                    items = items.map { it.copy(uri = fix(it.uri), subs = it.subs.map(::fix)) }
-                    play(i, startMs, forceVlc)
-                }.onFailure {
-                    onBuffering(false, 100)
-                    errorText.text = "Торрент-движок не запустился: ${it.message}"
-                    error.visibility = View.VISIBLE
-                }
-            }
-        }
     }
 
     private fun current(): Item? = items.getOrNull(index)
@@ -344,9 +339,9 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
 
     // ── События движка ───────────────────────────────────────────────────────
     override fun onStateChanged() {
-        reportRemote()
+        reportSession()
         val playing = engine?.isPlaying == true
-        if (playing) { paused = false; engineRestarted = false }
+        if (playing) paused = false
         dim.animate().alpha(if (playing || loading) 0f else if (paused) 1f else 0f).setDuration(250).start()
         if (playing) scheduleHide() else if (paused) showControls(0)
     }
@@ -356,7 +351,7 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         paused = true
         showControls(0)
         onStateChanged()
-        showToast("Пауза: звук ушёл с Bluetooth", "OK — продолжить на проекторе", 5000)
+        showToast(tr("Пауза: звук ушёл с Bluetooth", "Paused: the sound left Bluetooth"), tr("OK: продолжить", "OK: continue"), 5000)
     }
 
     override fun onBuffering(active: Boolean, percent: Int) {
@@ -387,51 +382,28 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
 
     override fun onEnded() {
         onBuffering(false, 100)
-        if (index + 1 < items.size) playNext()
+        if (index + 1 < items.size && cfg.bool(K.AUTO_NEXT)) playNext()
         else { completed = true; finishWithResult() }
     }
 
     override fun onError(message: String, fallback: Boolean) {
         onBuffering(false, 100)
-        val item = current()
-        if (item != null && TorrEngine.isOwn(item.uri) && !TorrEngine.isRunning && !engineRestarted) {
-            // встроенный движок остановился (простой в фоне, сбой): поднять и продолжить с того же места
-            engineRestarted = true
-            play(index, engine?.position ?: 0L, forceVlc = engineIsVlc)
-            return
-        }
-        if (item != null && TorrServe.isTorrServe(item.uri) && !fallback) {
-            // торрент не успел подгрузиться (мало сидов, медленная сеть): движок это не «формат не тот»,
-            // а пауза в данных. Ждём и продолжаем с того же места, до 5 раз на одну серию.
-            if (torrRetryIndex != index) { torrRetryIndex = index; torrRetries = 0 }
-            if (torrRetries < 5) {
-                torrRetries++
-                val pos = engine?.position ?: 0L
-                onBuffering(true, 0)
-                handler.postDelayed({ if (!isFinishing) play(index, pos, forceVlc = engineIsVlc) }, 4000)
-                return
-            }
-            errorText.text = "Торрент не успевает загружаться: у раздачи мало сидов или медленная сеть."
-            error.visibility = View.VISIBLE
-            return
-        }
         if (fallback && !engineIsVlc && !fellBack) {
             // Media3 не справился с форматом — пробуем тот же файл на VLC с того же места.
             fellBack = true
             val pos = engine?.position ?: 0L
             play(index, pos, forceVlc = true)
-            showToast("Включил запасной движок", "этот файл лучше играет через VLC", 3500)
+            showToast(tr("Включил запасной движок", "Switched to the backup engine"), tr("этот файл лучше играет через VLC", "this file plays better with VLC"), 3500)
             return
         }
-        errorText.text = if (item != null && TorrEngine.isOwn(item.uri) && !TorrEngine.isRunning)
-            "Торрент-движок остановился" else message
+        errorText.text = message
         error.visibility = View.VISIBLE
     }
 
     // ── Отрисовка ────────────────────────────────────────────────────────────
     private val tick = object : Runnable {
         override fun run() {
-            reportRemote()
+            reportSession()
             updateTimes()
             handler.postDelayed(this, 500)
         }
@@ -446,14 +418,15 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         val shown = scrubTarget ?: pos
         progress.update(dur, pos, e.buffered, scrubTarget)
         positionText.text = Time.format(shown)
-        remainingText.text = if (dur > 0) {
+        clock.visibility = if (cfg.bool(K.CLOCK)) View.VISIBLE else View.GONE
+        remainingText.text = if (dur > 0 && cfg.bool(K.CLOCK)) {
             val left = ((dur - shown) / e.speed.coerceAtLeast(0.1f)).toLong()
             "−${Time.format(dur - shown)}   ·   до ${clockFormat.format(Date(now.time + left))}"
         } else ""
         if (buffering.visibility == View.VISIBLE) updateBufferText()
 
         // Следующая серия: с начала титров, если в файле есть такая глава, иначе за 30 секунд до конца
-        val hasNext = index + 1 < items.size
+        val hasNext = index + 1 < items.size && cfg.bool(K.AUTO_NEXT)
         val credits = if (dur > 0) Chapters.creditsStart(chapters, dur) else null
         val from = credits ?: (dur - 30_000)
         if (hasNext && dur > 5 * 60_000 && pos in from until dur && !nextDismissed && !panelOpen) {
@@ -479,15 +452,6 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
             next.visibility = View.GONE
         }
 
-        // TorrServe: скорость и пиры — пока грузится или открыты панели
-        val item = current()
-        if (item != null && TorrServe.isTorrServe(item.uri) && (buffering.visibility == View.VISIBLE || controlsShown)) {
-            io.execute {
-                val s = TorrServe.stat(item.uri)
-                handler.post { torrentStat = s; showStat() }
-            }
-        }
-
         if (System.currentTimeMillis() - lastSave > 15_000 && e.isPlaying) save()
 
         // Журнал кадров — раз в 5 секунд (logcat на прошивке закрыт)
@@ -501,52 +465,6 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         }
     }
     private var lastDoviLog = 0L
-
-    private fun showStat() {
-        val s = torrentStat
-        val need = neededMbit(s)
-        val line = when {
-            s == null -> ""
-            s.complete -> "✓ загружено полностью"
-            need > 0 -> "↓ %.1f из %.0f Мбит/с · %d пир%s".format(s.speedMbit, need, s.peers, plural(s.peers))
-            else -> "↓ %.1f Мбит/с · %d пир%s".format(s.speedMbit, s.peers, plural(s.peers))
-        }
-        net.text = line
-        bufferDetail.text = line
-        warnSlowSwarm(s, need)
-    }
-
-    /** Битрейт файла: размер × 8 / длительность, Мбит/с (0 — не знаем). */
-    private fun neededMbit(s: TorrServe.Stat?): Double {
-        val dur = engine?.duration ?: 0L
-        if (s == null || s.fileBytes <= 0 || dur < 60_000) return 0.0
-        return s.fileBytes * 8.0 / (dur / 1000.0) / 1e6
-    }
-
-    private var slowSince = 0L
-    private var slowWarnedFor: Uri? = null
-
-    /**
-     * Раздача стабильно медленнее фильма (меньше 90 % битрейта полминуты, во время загрузки): говорим прямо,
-     * один раз на файл. Кэш движка в памяти — 256 МБ, это меньше минуты такого видео, так что пауза не спасёт:
-     * поможет раздача с большим числом сидов или полегче.
-     */
-    private fun warnSlowSwarm(s: TorrServe.Stat?, need: Double) {
-        val uri = current()?.uri ?: return
-        if (s == null || s.complete || need <= 0 || s.speedMbit >= need * 0.9 || slowWarnedFor == uri) { slowSince = 0; return }
-        val now = System.currentTimeMillis()
-        if (slowSince == 0L) { slowSince = now; return }
-        if (now - slowSince < 30_000 || buffering.visibility != View.VISIBLE) return
-        slowWarnedFor = uri
-        showToast("Раздача медленнее фильма: %.0f из %.0f Мбит/с".format(s.speedMbit, need),
-            "Будут остановки. Выберите раздачу с большим числом сидов или полегче (BDRip, WEB-DL)", 9000)
-    }
-
-    private fun plural(n: Int) = when {
-        n % 10 == 1 && n % 100 != 11 -> ""
-        n % 10 in 2..4 && n % 100 !in 12..14 -> "а"
-        else -> "ов"
-    }
 
     private fun showTitles() {
         val item = current() ?: return
@@ -564,7 +482,7 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
     private fun updateChips() {
         val e = engine ?: return
         while (chips.childCount > 1) chips.removeViewAt(0)
-        val labels = listOfNotNull(
+        val labels = if (!cfg.bool(K.INFO)) emptyList() else listOfNotNull(
             e.videoInfo(),
             e.audioInfo(),
             e.textInfo()?.let { "Субтитры: $it" },
@@ -593,7 +511,7 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
 
     private fun scheduleHide() {
         handler.removeCallbacks(hideControls)
-        if (engine?.isPlaying == true && !panelOpen && scrubTarget == null) handler.postDelayed(hideControls, 3500)
+        if (engine?.isPlaying == true && !panelOpen && scrubTarget == null) handler.postDelayed(hideControls, cfg.osdTimeoutMs)
     }
 
     private fun setControls(show: Boolean) {
@@ -617,19 +535,6 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
     private val hideToast = Runnable {
         toast.animate().alpha(0f).setDuration(300).start()
         resumedFrom = null
-    }
-
-    // ── DLNA: состояние для телефона и его команды (см. dlna/PlayerBridge) ──
-    private fun reportRemote() {
-        val e = engine
-        val state = when {
-            error.visibility == View.VISIBLE || completed -> PlayerBridge.State.STOPPED
-            e?.isPlaying == true -> PlayerBridge.State.PLAYING
-            paused -> PlayerBridge.State.PAUSED
-            else -> PlayerBridge.State.LOADING
-        }
-        PlayerBridge.report(this, current()?.uri?.toString(), state, e?.position ?: 0L, e?.duration ?: 0L)
-        reportSession(state, e)
     }
 
     // ── Медиасессия: кнопки Bluetooth-колонки и наушников (AVRCP) ────────────
@@ -658,12 +563,13 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         }.getOrNull()
     }
 
-    private fun reportSession(state: PlayerBridge.State, e: Engine?) {
+    private fun reportSession() {
         val s = session ?: return
-        val st = when (state) {
-            PlayerBridge.State.PLAYING -> android.media.session.PlaybackState.STATE_PLAYING
-            PlayerBridge.State.PAUSED -> android.media.session.PlaybackState.STATE_PAUSED
-            PlayerBridge.State.STOPPED -> android.media.session.PlaybackState.STATE_STOPPED
+        val e = engine
+        val st = when {
+            error.visibility == View.VISIBLE || completed -> android.media.session.PlaybackState.STATE_STOPPED
+            e?.isPlaying == true -> android.media.session.PlaybackState.STATE_PLAYING
+            paused -> android.media.session.PlaybackState.STATE_PAUSED
             else -> android.media.session.PlaybackState.STATE_BUFFERING
         }
         var actions = android.media.session.PlaybackState.ACTION_PLAY or android.media.session.PlaybackState.ACTION_PAUSE or
@@ -686,21 +592,21 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         }
     }
 
-    override fun remotePlay() { if (paused && error.visibility != View.VISIBLE) togglePlay() }
-    override fun remotePause() { if (!paused && engine != null) togglePlay() }
-    override fun remoteSeek(ms: Long) {
+    private fun remotePlay() { if (paused && error.visibility != View.VISIBLE) togglePlay() }
+    private fun remotePause() { if (!paused && engine != null) togglePlay() }
+    private fun remoteSeek(ms: Long) {
         val e = engine ?: return
         val dur = e.duration
         e.seekTo(if (dur > 0) ms.coerceIn(0, dur - 1000) else ms)
         showControls(3000)
         updateTimes()
     }
-    override fun remoteStop() = finishWithResult()
 
     // ── Пульт ────────────────────────────────────────────────────────────────
     override fun dispatchKeyEvent(e: KeyEvent): Boolean {
         if (panelOpen) {
-            val close = e.keyCode == KeyEvent.KEYCODE_BACK || e.keyCode == KeyEvent.KEYCODE_MENU || e.keyCode == KeyEvent.KEYCODE_DPAD_LEFT
+            val stepper = currentFocus?.tag == "stepper"
+            val close = e.keyCode == KeyEvent.KEYCODE_BACK || e.keyCode == KeyEvent.KEYCODE_MENU || (e.keyCode == KeyEvent.KEYCODE_DPAD_LEFT && !stepper)
             if (close) { if (e.action == KeyEvent.ACTION_DOWN) closePanel(); return true }
             return super.dispatchKeyEvent(e)
         }
@@ -725,7 +631,9 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         when (e.keyCode) {
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER,
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_SPACE -> {
-                if (next.visibility == View.VISIBLE && e.keyCode != KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) playNext()
+                val ok = e.keyCode != KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE && e.keyCode != KeyEvent.KEYCODE_SPACE
+                if (next.visibility == View.VISIBLE && ok) playNext()
+                else if (e.repeatCount == 0 && ok && cfg.string(K.KEY_OK) == "menu") openPanel()
                 else if (e.repeatCount == 0) togglePlay()
             }
             KeyEvent.KEYCODE_MEDIA_PLAY -> if (paused) togglePlay()
@@ -735,10 +643,12 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
             KeyEvent.KEYCODE_DPAD_UP -> {
                 if (resumedFrom != null && toast.alpha > 0f) {
                     eng.seekTo(0); hideToast.run()
-                    showToast("Смотрим с начала", "", 1500)
-                } else showControls(5000)
+                    showToast(tr("Смотрим с начала", "Watching from the start"), "", 1500)
+                } else if (cfg.string(K.KEY_UPDOWN) == "seek") scrub(cfg.bigStepMs)
+                else showControls(5000)
             }
-            KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_INFO -> openPanel()
+            KeyEvent.KEYCODE_DPAD_DOWN -> if (cfg.string(K.KEY_UPDOWN) == "seek") scrub(-cfg.bigStepMs) else openPanel()
+            KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_INFO -> openPanel()
             KeyEvent.KEYCODE_MEDIA_NEXT -> if (index + 1 < items.size) playNext()
             KeyEvent.KEYCODE_MEDIA_PREVIOUS -> if (index > 0) { save(); play(index - 1, savedPosition(items[index - 1]) ?: 0) }
             KeyEvent.KEYCODE_BACK -> when {
@@ -766,12 +676,16 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         if (!loading) badge.flash(!paused)
     }
 
-    /** Шаг перемотки растёт, пока кнопку держат: 10 с → 30 с → 1 мин → 2 мин. */
-    private fun step(repeat: Int) = when {
-        repeat < 6 -> 10_000L
-        repeat < 16 -> 30_000L
-        repeat < 30 -> 60_000L
-        else -> 120_000L
+    /** Шаг перемотки из настроек; если включено ускорение, растёт, пока кнопку держат: до 30 с, 1 мин, 2 мин. */
+    private fun step(repeat: Int): Long {
+        val base = cfg.seekStepMs
+        if (!cfg.bool(K.SEEK_ACCEL)) return base
+        return when {
+            repeat < 6 -> base
+            repeat < 16 -> maxOf(base, 30_000L)
+            repeat < 30 -> maxOf(base, 60_000L)
+            else -> maxOf(base, 120_000L)
+        }
     }
 
     private fun scrub(delta: Long) {
@@ -830,43 +744,48 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
 
         val quality = eng.videoTracks()
         if (quality.isNotEmpty()) {
-            header("Качество")
-            row("Авто", quality.none { it.selected }) { eng.selectVideo(null) }
+            header(tr("Качество", "Quality"))
+            row(tr("Авто", "Auto"), quality.none { it.selected }) { eng.selectVideo(null) }
             for (t in quality) row(t.label, t.selected) { eng.selectVideo(t.id) }
         }
 
-        header("Звук")
+        header(tr("Звук", "Audio"))
         val audio = eng.audioTracks()
-        if (audio.isEmpty()) note("Одна дорожка")
+        if (audio.isEmpty()) note(tr("Одна дорожка", "One track"))
         for (t in audio) row(t.label, t.selected) { eng.selectAudio(t.id) }
+        stepper(K.AUDIO_DELAY, { audioDelay }) { audioDelay = it; engine?.setAudioDelay(it) }
 
-        header("Субтитры")
+        header(tr("Субтитры", "Subtitles"))
         val text = eng.textTracks()
-        row("Выключены", text.none { it.selected }) {
-            eng.selectText(null)
-            prefs().edit().remove("subLang").apply()
-        }
+        row(tr("Выключены", "Off"), text.none { it.selected }) { eng.selectText(null) }
         for (t in text) row(t.label, t.selected) { eng.selectText(t.id) }
+        if (text.isNotEmpty()) stepper(K.SUB_DELAY, { subDelay }) { setSubDelay(it) }
 
-        header("Скорость")
-        for (s in listOf(0.75f, 1f, 1.25f, 1.5f, 2f)) {
-            val label = if (s == 1f) "Обычная" else "×" + s.toString().removeSuffix(".0").replace('.', ',')
-            row(label, kotlin.math.abs(eng.speed - s) < 0.01f) { eng.speed = s }
+        header(tr("Скорость", "Speed"))
+        for (s in listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)) {
+            val label = if (s == 1f) tr("Обычная", "Normal") else "×" + s.toString().removeSuffix(".0").let { if (tr("ru", "en") == "ru") it.replace('.', ',') else it }
+            row(label, kotlin.math.abs(eng.speed - s) < 0.01f) {
+                eng.speed = s
+                prefs().edit().putFloat("lastSpeed", s).apply()
+            }
         }
 
-        header("Экран")
-        val scale = prefs().getInt("scaleMode", 0)
-        for ((mode, label) in listOf(0 to "Целиком", 1 to "Заполнить (обрезать края)", 2 to "Растянуть")) {
-            row(label, scale == mode) {
-                eng.setScale(mode)
-                prefs().edit().putInt("scaleMode", mode).apply()
-            }
+        header(tr("Масштаб", "Zoom"))
+        val ru = tr("ru", "en") == "ru"
+        for (o in K.SCALE.options) row(if (ru) o.ru else o.en, cfg.string(K.SCALE) == o.value) {
+            eng.setScale(o.value.toInt())
+            cfg.set(K.SCALE, o.value)
+        }
+        header(tr("Соотношение сторон", "Aspect ratio"))
+        for (o in K.ASPECT.options) row(if (ru) o.ru else o.en, cfg.string(K.ASPECT) == o.value) {
+            eng.setAspect(o.value)
+            cfg.set(K.ASPECT, o.value)
         }
 
         val exo = eng as? ExoEngine
         if (exo != null && exo.isDovi) {
             header("Dolby Vision 5")
-            for ((hdr, label) in listOf(false to "SDR — свой тон-маппинг", true to "HDR10 — отдать проектору")) {
+            for ((hdr, label) in listOf(false to tr("SDR, свой тон-маппинг", "SDR, own tone mapping"), true to tr("HDR10 на проектор", "HDR10 to the display"))) {
                 row(label, exo.doviHdr == hdr) {
                     exo.doviHdr = hdr
                     // режим вывода задаётся при создании слоя — пересоздаём движок с того же места
@@ -878,7 +797,30 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
             }
         }
 
-        note(if (engineIsVlc) "Движок: VLC" else "Движок: Media3")
+        action(tr("Все настройки плеера", "All player settings")) {
+            closePanel()
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
+        note(if (engineIsVlc) tr("Движок: VLC", "Engine: VLC") else tr("Движок: Media3", "Engine: Media3"))
+    }
+
+    /** Задержка субтитров в панели. Media3 сдвигает внешние файлы при открытии, поэтому при минусе открываем заново. */
+    private fun setSubDelay(v: Int) {
+        val before = subDelay
+        subDelay = v
+        engine?.setSubtitleDelay(v)
+        val item = current() ?: return
+        if (!engineIsVlc && (item.subs.isNotEmpty() || item.uri.scheme == "file") && (v < 0 || before < 0)) {
+            handler.removeCallbacks(reopen)
+            handler.postDelayed(reopen, 900)
+        }
+    }
+
+    private val reopen = Runnable {
+        val pos = engine?.position ?: return@Runnable
+        val wasPaused = paused
+        play(index, pos)
+        if (wasPaused) { engine?.pause(); paused = true }
     }
 
     private fun header(text: String) {
@@ -901,18 +843,30 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         })
     }
 
+    /** Отметка выбранного: точка, нарисованная фигурой (не символ). */
+    private fun dot(selected: Boolean) = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setSize(dp(10), dp(10))
+        if (selected) setColor(Color.WHITE) else setColor(Color.TRANSPARENT)
+    }
+
+    private fun item(text: String, selected: Boolean): TextView = TextView(this).apply {
+        this.text = text
+        tag = if (selected) "selected" else null
+        textSize = 19f
+        setTextColor(if (selected) Color.WHITE else getColor(R.color.text_dim))
+        typeface = if (selected) Typeface.create("sans-serif-medium", Typeface.NORMAL) else Typeface.DEFAULT
+        background = getDrawable(R.drawable.item_bg)
+        setPadding(dp(16), dp(13), dp(16), dp(13))
+        gravity = Gravity.CENTER_VERTICAL
+        compoundDrawablePadding = dp(14)
+        setCompoundDrawablesRelative(dot(selected), null, null, null)
+        isFocusable = true
+        isClickable = true
+    }
+
     private fun row(text: String, selected: Boolean, onClick: () -> Unit) {
-        panelList.addView(TextView(this).apply {
-            this.text = (if (selected) "●   " else "      ") + text
-            tag = if (selected) "selected" else null
-            textSize = 19f
-            setTextColor(if (selected) Color.WHITE else getColor(R.color.text_dim))
-            typeface = if (selected) Typeface.create("sans-serif-medium", Typeface.NORMAL) else Typeface.DEFAULT
-            background = getDrawable(R.drawable.item_bg)
-            setPadding(dp(16), dp(13), dp(16), dp(13))
-            gravity = Gravity.CENTER_VERTICAL
-            isFocusable = true
-            isClickable = true
+        panelList.addView(item(text, selected).apply {
             setOnClickListener {
                 onClick()
                 handler.postDelayed({
@@ -923,6 +877,33 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
                 }, 200)
             }
         }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
+    }
+
+    private fun action(text: String, onClick: () -> Unit) {
+        panelList.addView(item(text, false).apply {
+            setCompoundDrawablesRelative(null, null, null, null)
+            setTextColor(Color.WHITE)
+            setOnClickListener { onClick() }
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
+    }
+
+    /** Число, которое меняют кнопки влево и вправо (задержки). Только на этот сеанс. */
+    private fun stepper(s: Stepper, get: () -> Int, set: (Int) -> Unit) {
+        val ru = tr("ru", "en") == "ru"
+        val v = item("", false)
+        fun paint() { v.text = (if (ru) s.ru else s.en) + "   " + Settings.stepLabel(s, get(), ru) }
+        paint()
+        v.tag = "stepper"
+        val l = getDrawable(R.drawable.ic_chevron_left)!!.mutate().apply { setTint(Color.WHITE); setBounds(0, 0, dp(20), dp(20)) }
+        val r = getDrawable(R.drawable.ic_chevron_right)!!.mutate().apply { setTint(Color.WHITE); setBounds(0, 0, dp(20), dp(20)) }
+        v.setCompoundDrawablesRelative(l, null, r, null)
+        v.setOnKeyListener { _, code, ev ->
+            val dir = when (code) { KeyEvent.KEYCODE_DPAD_LEFT -> -1; KeyEvent.KEYCODE_DPAD_RIGHT -> 1; else -> 0 }
+            if (dir == 0) return@setOnKeyListener false
+            if (ev.action == KeyEvent.ACTION_DOWN) { set(s.clamp(get() + dir * s.step)); paint() }
+            true
+        }
+        panelList.addView(v, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
     }
 
     // ── Сохранение и выход ───────────────────────────────────────────────────

@@ -163,7 +163,7 @@ data class Meta(
 }
 
 /**
- * TMDB: обложки, описания и поиск фильмов. Ключ попадает в APK только при сборке (BuildConfig.TMDB_KEY из
+ * TMDB: обложки и названия для «Продолжить просмотр». Ключ попадает в APK только при сборке (BuildConfig.TMDB_KEY из
  * файла на машине сборки); без ключа всё молча выключено. Ответы кэшируются на диске (30 дней, промахи — сутки).
  * This product uses the TMDB API but is not endorsed or certified by TMDB.
  */
@@ -215,14 +215,6 @@ object Tmdb {
         return m
     }
 
-    /** Поиск для экрана «Торренты»: фильмы и сериалы с постером, по популярности. */
-    fun search(query: String): List<Meta> {
-        if (!enabled || query.isBlank()) return emptyList()
-        val res = get("/search/multi", mapOf("query" to query)).optJSONArray("results") ?: return emptyList()
-        return (0 until res.length()).mapNotNull { Meta.from(res.getJSONObject(it)) }.filter { it.poster != null }.take(20)
-    }
-
-    /** Сезон сериала: номер, серий, год. */
     /**
      * Кадр серии из TMDB (still_path) в w1280, или null. Кэш на 30 дней, промах — на день. Блокирующее: не из
      * главного потока.
@@ -243,28 +235,5 @@ object Tmdb {
             .takeIf { it.startsWith("/") }
         runCatching { f.writeText(path ?: "-") }
         return path?.let { ContinueArt.tmdb(it) }
-    }
-
-    class Season(val number: Int, val episodes: Int, val year: String?)
-
-    /** Подробности для страницы фильма: жанры, длительность, сезоны. */
-    class Details(val genres: List<String>, val runtime: Int, val seasons: List<Season>, val tagline: String?)
-
-    /** Жанры, длительность и сезоны (кэш на неделю). Блокирующее: не из главного потока. */
-    fun details(ctx: Context, m: Meta): Details? {
-        if (!enabled) return null
-        val key = "details|$lang|${if (m.tv) "tv" else "movie"}|${m.id}"
-        val f = cacheFile(ctx, key)
-        val o = if (f.exists() && System.currentTimeMillis() - f.lastModified() < 7L * 86400_000L) runCatching { JSONObject(f.readText()) }.getOrNull() else null
-        val j = o ?: runCatching { get("/${if (m.tv) "tv" else "movie"}/${m.id}", emptyMap()) }
-            .onFailure { android.util.Log.w("LumenTmdb", "details ${m.id}: $it") }.getOrNull()?.also { runCatching { f.writeText(it.toString()) } }
-            ?: return null
-        val genres = j.optJSONArray("genres")?.let { a -> (0 until a.length()).map { a.getJSONObject(it).optString("name") }.filter { it.isNotEmpty() } } ?: emptyList()
-        val runtime = j.optInt("runtime").takeIf { it > 0 } ?: j.optJSONArray("episode_run_time")?.optInt(0) ?: 0
-        val seasons = j.optJSONArray("seasons")?.let { a ->
-            (0 until a.length()).map { a.getJSONObject(it) }.filter { it.optInt("season_number") > 0 }
-                .map { Season(it.optInt("season_number"), it.optInt("episode_count"), it.optString("air_date").take(4).ifEmpty { null }) }
-        } ?: emptyList()
-        return Details(genres, runtime, seasons, j.optString("tagline").ifEmpty { null })
     }
 }

@@ -10,9 +10,6 @@ import com.xgimiru.player.History
 import com.xgimiru.player.Name
 import com.xgimiru.player.PlayerActivity
 import com.xgimiru.player.Time
-import com.xgimiru.player.tv.Epg
-import com.xgimiru.player.tv.Iptv
-import com.xgimiru.player.tv.LiveActivity
 import com.xgimiru.player.ui.Card
 import com.xgimiru.player.ui.Host
 import com.xgimiru.player.ui.Img
@@ -24,9 +21,8 @@ import com.xgimiru.player.ui.onKey
 import com.xgimiru.player.ui.tr
 
 /**
- * Главная: только то, что вы смотрите. Ряд «Продолжить просмотр» (начатые фильмы и серии) и ряд
- * «Каналы» (избранные, иначе последний и первые из плейлиста). Ничего не повторяется дважды.
- * Пусто — три первых шага: плейлист, поиск, файлы.
+ * Главная: только то, что вы смотрите. Ряд «Продолжить просмотр» (начатые фильмы и серии).
+ * Пусто — два первых шага: файлы и папки в сети.
  */
 class HomePane(private val act: Activity, private val host: Host, private val go: (String) -> Unit) : Pane {
     private val root = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
@@ -55,20 +51,18 @@ class HomePane(private val act: Activity, private val host: Host, private val go
         val d = { v: Number -> Ui.dp(act, v) }
         val history = History.all(act).filter { !it.finished }
         for (e in history) com.xgimiru.player.WatchNext.publish(act, e)   // «Продолжить просмотр» лаунчера (записи до 0.12)
-        val channels = channelsForHome()
-        if (history.isEmpty() && channels.isEmpty()) {
+        if (history.isEmpty()) {
             host.backdrop(null)
             host.info(null, null, null, null)
             (root.layoutParams as? android.widget.FrameLayout.LayoutParams)?.topMargin = d(110)
             root.addView(LinearLayout(act).apply {
                 orientation = LinearLayout.VERTICAL
                 addView(emptyState(act, tr("Добро пожаловать", "Welcome"),
-                    tr("Lumen Play играет торренты, IPTV и файлы с флешки. Начните с одного из шагов ниже.",
-                        "Lumen Play plays torrents, IPTV and files from a USB stick. Start with one of the steps below."), null, null))
+                    tr("Lumen Play играет видео с флешки, из памяти проектора и из папок в сети. Другие приложения тоже могут открывать в нём видео.",
+                        "Lumen Play plays videos from a USB stick, the device storage and network folders. Other apps can open videos in it too."), null, null))
                 val r = Row(act, "")
-                r.add(step(tr("Добавить плейлист", "Add a playlist"), tr("каналы IPTV", "IPTV channels")) { go("tv") })
-                r.add(step(tr("Найти фильм", "Find a movie"), tr("поиск торрентов", "torrent search")) { go("torrents") })
                 r.add(step(tr("Открыть файлы", "Open files"), tr("флешка и память", "USB stick and storage")) { go("files") })
+                r.add(step(tr("Папки в сети", "Network folders"), tr("компьютер, NAS, DLNA", "computer, NAS, DLNA")) { go("network") })
                 addView(r, Ui.linear(-1, -2).apply { topMargin = d(18) })
             }, Ui.linear(-1, -1))
             return
@@ -79,20 +73,6 @@ class HomePane(private val act: Activity, private val host: Host, private val go
             for (e in history.take(20)) r.add(historyCard(e).also { c -> c.onRow = { follow(r) } })
             root.addView(r); rows += r
         }
-        if (channels.isNotEmpty()) {
-            val r = Row(act, if (Iptv.favorites(act).isNotEmpty()) tr("Избранные каналы", "Favorite channels") else tr("Каналы", "Channels"))
-            for (c in channels) r.add(channelCard(c).also { cc -> cc.onRow = { follow(r) } })
-            root.addView(r, Ui.linear(-1, -2).apply { topMargin = d(4) }); rows += r
-        }
-    }
-
-    private fun channelsForHome(): List<com.xgimiru.player.tv.Channel> {
-        val fav = Iptv.favoriteChannels(act)
-        if (fav.isNotEmpty()) return fav.take(20)
-        val all = Iptv.channels(act)
-        if (all.isEmpty()) return emptyList()
-        val last = Iptv.last(act)
-        return (listOfNotNull(last) + all).distinctBy { it.key }.take(12)
     }
 
     private fun historyCard(e: History.Entry): Card {
@@ -130,25 +110,6 @@ class HomePane(private val act: Activity, private val host: Host, private val go
             act.startActivity(Intent(act, PlayerActivity::class.java).setData(Uri.parse(e.uri)).putExtra("title", e.title))
         }
         c.onKey(android.view.KeyEvent.KEYCODE_MENU) { History.remove(act, e.key); build(); root.post { focusFirst() }; true }
-        return c
-    }
-
-    private fun channelCard(ch: com.xgimiru.player.tv.Channel): Card {
-        val c = Card(act, 176, 99, logo = true)
-        c.label.text = ch.name
-        c.label.visibility = if (ch.logo == null) View.VISIBLE else View.GONE
-        Img.load(c.image, ch.logo, 300)
-        c.onFocus = { f ->
-            if (f) {
-                val now = Epg.now(act, ch)
-                host.backdrop(null)
-                host.info(tr("Канал ${ch.number}", "Channel ${ch.number}"), ch.name, now?.title,
-                    now?.desc, now?.progress(System.currentTimeMillis()) ?: -1f)
-            }
-        }
-        c.setOnClickListener {
-            LiveActivity.open(act, ch, if (Iptv.favorites(act).isNotEmpty()) "fav" else "all")
-        }
         return c
     }
 
