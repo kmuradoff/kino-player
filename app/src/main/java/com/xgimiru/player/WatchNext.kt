@@ -91,8 +91,14 @@ object WatchNext {
             put(TvContract.WatchNextPrograms.COLUMN_LAST_ENGAGEMENT_TIME_UTC_MILLIS, e.updated)
             put(TvContract.WatchNextPrograms.COLUMN_INTERNAL_PROVIDER_ID, e.key)
             put(TvContract.WatchNextPrograms.COLUMN_INTENT_URI, open.toUri(Intent.URI_INTENT_SCHEME))
+            // обложка: фон сериала из TMDB, затем кадр серии из TMDB, иначе кадр из видео ([ContinueArt])
+            val still = if (meta != null && n.season != null && n.episode != null) com.xgimiru.player.net.Tmdb.still(ctx, meta, n.season, n.episode) else null
+            val grab = if (Art.file(ctx, e.key).exists()) Art.uri(e.key).toString() else null
+            val art = ContinueArt.pick(meta?.backdrop("w1280"), still, grab)
             put(TvContract.WatchNextPrograms.COLUMN_POSTER_ART_ASPECT_RATIO, TvContract.WatchNextPrograms.ASPECT_RATIO_16_9)
-            if (Art.file(ctx, e.key).exists()) put(TvContract.WatchNextPrograms.COLUMN_POSTER_ART_URI, Art.uri(e.key).toString())
+            put(TvContract.WatchNextPrograms.COLUMN_THUMBNAIL_ASPECT_RATIO, TvContract.WatchNextPrograms.ASPECT_RATIO_16_9)
+            if (art.poster != null) put(TvContract.WatchNextPrograms.COLUMN_POSTER_ART_URI, art.poster) else putNull(TvContract.WatchNextPrograms.COLUMN_POSTER_ART_URI)
+            if (art.thumbnail != null) put(TvContract.WatchNextPrograms.COLUMN_THUMBNAIL_URI, art.thumbnail) else putNull(TvContract.WatchNextPrograms.COLUMN_THUMBNAIL_URI)
         }
         val cr = ctx.contentResolver
         val id = ids(ctx).getLong(e.key, -1L)

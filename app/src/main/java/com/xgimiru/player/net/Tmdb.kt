@@ -1,5 +1,6 @@
 package com.xgimiru.player.net
 
+import com.xgimiru.player.ContinueArt
 import android.content.Context
 import com.xgimiru.player.BuildConfig
 import org.json.JSONObject
@@ -222,6 +223,28 @@ object Tmdb {
     }
 
     /** Сезон сериала: номер, серий, год. */
+    /**
+     * Кадр серии из TMDB (still_path) в w1280, или null. Кэш на 30 дней, промах — на день. Блокирующее: не из
+     * главного потока.
+     */
+    fun still(ctx: Context, m: Meta, season: String, episode: String): String? {
+        if (!enabled || !m.tv) return null
+        val key = "still|${m.id}|$season|$episode"
+        val f = cacheFile(ctx, key)
+        if (f.exists()) {
+            val age = System.currentTimeMillis() - f.lastModified()
+            val txt = f.readText()
+            if (txt == "-" && age < 86400_000L) return null
+            if (txt != "-" && age < 30L * 86400_000L) return ContinueArt.tmdb(txt)
+        }
+        val path = runCatching { get("/tv/${m.id}/season/$season/episode/$episode", emptyMap()).optString("still_path") }
+            .onFailure { android.util.Log.w("LumenTmdb", "still ${m.id} s$season e$episode: $it") }
+            .getOrElse { return null }
+            .takeIf { it.startsWith("/") }
+        runCatching { f.writeText(path ?: "-") }
+        return path?.let { ContinueArt.tmdb(it) }
+    }
+
     class Season(val number: Int, val episodes: Int, val year: String?)
 
     /** Подробности для страницы фильма: жанры, длительность, сезоны. */
