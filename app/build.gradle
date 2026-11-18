@@ -34,7 +34,8 @@ android {
         abi {
             enable true
             reset()
-            include 'arm64-v8a', 'armeabi-v7a'
+            // -Pkino.abis=x86 собирает APK для эмулятора (проверка экранов), выпуск всегда два ARM
+            include(*((project.findProperty('kino.abis') ?: 'arm64-v8a,armeabi-v7a') as String).split(','))
             universalApk false
         }
     }
