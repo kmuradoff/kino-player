@@ -316,8 +316,12 @@ class SettingsActivity : Activity() {
             opts.addView(row, Ui.linear(-1, -2).apply { bottomMargin = d(2) })
             if (sel) focus = row
         }
-        card.addView(ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(opts) }, Ui.linear(-1, -2))
-        overlay.addView(card, Ui.frame(d(420), -2, Gravity.END or Gravity.CENTER_VERTICAL).apply { rightMargin = d(48) })
+        // длинный список (кодировки, языки) занимает высоту экрана и прокручивается внутри окна
+        val tall = c.options.size > 8
+        card.addView(ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(opts) }, if (tall) Ui.linear(-1, 0, 1f) else Ui.linear(-1, -2))
+        overlay.addView(card, Ui.frame(d(420), if (tall) -1 else -2, Gravity.END or Gravity.CENTER_VERTICAL).apply {
+            rightMargin = d(48); topMargin = d(36); bottomMargin = d(36)
+        })
         overlay.visibility = View.VISIBLE
         overlay.post { (focus ?: opts.getChildAt(0))?.requestFocus() }
     }
