@@ -94,14 +94,14 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
     }
 
     /** Субтитры: стиль из настроек, задержка через очередь [pending]. */
-    private val subs = SubtitleView(ctx).also { styleSubtitles(it) }
+    private val subView = SubtitleView(ctx).also { styleSubtitles(it) }
     private val pending = ArrayDeque<CueGroup>()
     private val pump = object : Runnable {
         override fun run() {
             val now = player.currentPosition * 1000
             var shown: CueGroup? = null
             while (pending.isNotEmpty() && pending.first().presentationTimeUs + subDelayUs <= now) shown = pending.removeFirst()
-            shown?.let { subs.setCues(it.cues) }
+            shown?.let { subView.setCues(it.cues) }
             if (pending.isNotEmpty()) main.postDelayed(this, 40)
         }
     }
@@ -141,7 +141,7 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
             if (FrameRateHook.active()) C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS else C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF)
         view.player = player
         host.addView(view, FrameLayout.LayoutParams(-1, -1))
-        host.addView(subs, FrameLayout.LayoutParams(-1, -1))
+        host.addView(subView, FrameLayout.LayoutParams(-1, -1))
         applyEffects()
         dovi.onActivated = {
             // DV5 рисует наш шейдер — кадры нужны приложению, туннель тут невозможен.
@@ -171,13 +171,13 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
             override fun onRenderedFirstFrame() = applyAspect()
             override fun onAudioSessionIdChanged(audioSessionId: Int) = applyEffects()
             override fun onCues(cueGroup: CueGroup) {
-                if (subDelayUs <= 0) { pending.clear(); subs.setCues(cueGroup.cues); return }
+                if (subDelayUs <= 0) { pending.clear(); subView.setCues(cueGroup.cues); return }
                 pending.addLast(cueGroup)
                 main.removeCallbacks(pump)
                 main.post(pump)
             }
             override fun onPositionDiscontinuity(old: Player.PositionInfo, new: Player.PositionInfo, reason: Int) {
-                if (reason == Player.DISCONTINUITY_REASON_SEEK) { pending.clear(); subs.setCues(emptyList()) }
+                if (reason == Player.DISCONTINUITY_REASON_SEEK) { pending.clear(); subView.setCues(emptyList()) }
             }
             override fun onTracksChanged(tracks: Tracks) {
                 // Dolby Vision профиля 5 без HDR10-основы: в прошивке XGIMI декодер DV выключен —
@@ -221,7 +221,7 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
             player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
                 .clearOverridesOfType(C.TRACK_TYPE_VIDEO).build()
             trackSelector.setParameters(trackParams(trackSelector.buildUponParameters()))
-            pending.clear(); subs.setCues(emptyList())
+            pending.clear(); subView.setCues(emptyList())
             val subConfigs = subs.map {
                 MediaItem.SubtitleConfiguration.Builder(it).setMimeType(subtitleMime(it)).setLanguage(subtitleLanguage(it)).build()
             }
@@ -367,7 +367,7 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
         doviRenderer?.release()
         doviView?.let { host.removeView(it) }
         host.removeView(view)
-        host.removeView(subs)
+        host.removeView(subView)
     }
 
     /**

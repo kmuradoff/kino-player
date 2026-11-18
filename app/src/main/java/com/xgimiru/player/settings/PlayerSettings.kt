@@ -18,7 +18,7 @@ enum class Section(val ru: String, val en: String) {
     INTERFACE("Интерфейс", "Interface"),
 }
 
-class Option(val value: String, val ru: String, val en: String = ru)
+class Option(val value: String, val ru: String = value, val en: String = ru)
 
 /** One row of the settings screen. [shownIf] hides rows that make no sense now (formats without passthrough). */
 sealed class Setting(val key: String, val section: Section, val ru: String, val en: String, val shownIf: ((Settings) -> Boolean)?)
