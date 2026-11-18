@@ -63,6 +63,8 @@ class FilesPane(private val act: Activity, private val host: Host) : Pane {
 
     private fun build() {
         root.removeAllViews()
+        // списки и строка пути живут дольше разметки: перед новой раскладкой отцепить от старой
+        for (v in listOf<View>(placeList, fileList, path)) (v.parent as? android.view.ViewGroup)?.removeView(v)
         places.clear()
         val sm = act.getSystemService(StorageManager::class.java)
         for (v in sm.storageVolumes) {
