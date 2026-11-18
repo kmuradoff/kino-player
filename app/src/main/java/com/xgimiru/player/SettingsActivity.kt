@@ -12,8 +12,11 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import com.xgimiru.player.dlna.DlnaSettings
 import com.xgimiru.player.dovi.HdrPolicy
+import com.xgimiru.player.send.SendSettings
 import com.xgimiru.player.settings.Choice
+import com.xgimiru.player.settings.Option
 import com.xgimiru.player.settings.K
 import com.xgimiru.player.settings.Section
 import com.xgimiru.player.settings.Setting
@@ -25,7 +28,8 @@ import com.xgimiru.player.ui.Ui
 import com.xgimiru.player.ui.tr
 
 /**
- * Настройки плеера, как в Kodi: слева разделы (Видео, Звук, Субтитры, Интерфейс, О приложении), справа
+ * Настройки плеера, как в Kodi: слева разделы (Видео, Звук, Субтитры, Интерфейс, Трансляция, TorrServer,
+ * О приложении), справа
  * строки со значением. OK на строке со списком открывает выбор справа, переключатель меняется сразу,
  * числа (задержки) меняются кнопками влево и вправо. Всё сохраняется сразу.
  */
@@ -34,7 +38,7 @@ class SettingsActivity : Activity() {
     private sealed class Row(val title: String) {
         class Of(val s: Setting) : Row("")
         class Flag(title: String, val get: () -> Boolean, val set: (Boolean) -> Unit) : Row(title)
-        class Action(title: String, val value: String?, val run: () -> Unit) : Row(title)
+        class Action(title: String, val value: String?, val key: String? = null, val run: () -> Unit) : Row(title)
     }
 
     private class Tab(val id: String, val label: String, val icon: Int, val section: Section?)
@@ -56,6 +60,8 @@ class SettingsActivity : Activity() {
             Tab("audio", tr("Звук", "Audio"), R.drawable.ic_volume_up, Section.AUDIO),
             Tab("subtitles", tr("Субтитры", "Subtitles"), R.drawable.ic_subtitles, Section.SUBTITLES),
             Tab("interface", tr("Интерфейс", "Interface"), R.drawable.ic_tune, Section.INTERFACE),
+            Tab("casting", tr("Трансляция", "Casting"), R.drawable.ic_cast, null),
+            Tab("torrserver", "TorrServer", R.drawable.ic_dns, null),
             Tab("about", tr("О приложении", "About"), R.drawable.ic_info, null),
         )
     }
@@ -139,7 +145,7 @@ class SettingsActivity : Activity() {
     }
 
     private fun rows(t: Tab): List<Row> {
-        val s = t.section ?: return about()
+        val s = t.section ?: return when (t.id) { "casting" -> casting(); "torrserver" -> torrserver(); else -> about() }
         val out = K.of(s).filter { cfg.visible(it) }.map { Row.Of(it) as Row }.toMutableList()
         if (s == Section.VIDEO) out.addAll(out.indexOfFirst { it is Row.Of && it.s == K.SCALE }.coerceAtLeast(0), hdrRows())
         return out
@@ -159,6 +165,75 @@ class SettingsActivity : Activity() {
         }
         if (caps.hdr10PlusDisplay) out += Row.Flag("HDR10+", { HdrPolicy.prefs(this).hdr10Plus }) { HdrPolicy.set(this, "hdr10Plus", it) }
         return out
+    }
+
+    /** DLNA renderer (phones and computers cast to Lumen Play) and browsers allowed to send videos. */
+    private fun casting(): List<Row> {
+        val out = ArrayList<Row>()
+        out += Row.Flag(tr("Трансляция с телефона (DLNA)", "Casting from phones (DLNA)"), { DlnaSettings.enabled(this) }) {
+            DlnaSettings.setEnabled(this, it)
+        }
+        if (!DlnaSettings.canOpenFromBackground(this)) DlnaSettings.overlayIntent(this)?.let { i ->
+            out += Row.Action(tr("Открываться поверх других приложений", "Open over other apps"), tr("не разрешено", "not allowed")) {
+                runCatching { startActivity(i) }
+            }
+        }
+        val devices = SendSettings.devices(this)
+        if (devices.isEmpty()) out += Row.Action(tr("Отправка из браузера", "Send from a browser"), tr("пока никого", "nobody yet")) {
+            SendSettings.explain(this)
+        }
+        for (dev in devices) out += Row.Action(dev.client, SendSettings.connected(dev)) {
+            SendSettings.confirmRemove(this, dev) { reload() }
+        }
+        return out
+    }
+
+    /** Built-in TorrServer: the mode for Lampa (127.0.0.1:8090), its state and cache. */
+    private fun torrserver(): List<Row> {
+        if (!TorrEngine.isAvailable(this)) {
+            return listOf(Row.Action(tr("Встроенный TorrServer", "Built-in TorrServer"), tr("нет в этой сборке", "not in this build")) {})
+        }
+        return listOf(
+            Row.Flag(tr("TorrServer для Лампы и других приложений", "TorrServer for Lampa and other apps"), { TorrSettings.shared(this) }) { on ->
+                TorrSettings.setShared(this, on)
+                if (on) TorrService.hold(this, TorrService.SHARED) else TorrService.release(this, TorrService.SHARED)
+                list.postDelayed({ if (tabs[tab].id == "torrserver") reload() }, 3000)
+            },
+            Row.Action(tr("Состояние", "Status"), torrStatus()) { reload() },
+            Row.Action(tr("Адрес для Лампы", "Address for Lampa"), "127.0.0.1:${TorrEngine.SHARED_PORT}") {},
+            Row.Action(tr("Кэш", "Cache"), cacheLabel(TorrSettings.cacheMb(this)), CACHE_KEY) { pickCache() },
+            Row.Action(tr("Версия", "Version"), "TorrServer ${BuildConfig.TORRSERVER}, GPL 3.0") {},
+        )
+    }
+
+    private fun torrStatus(): String = when {
+        TorrEngine.isRunning -> tr("работает: 127.0.0.1:${TorrEngine.port}", "running: 127.0.0.1:${TorrEngine.port}")
+        TorrEngine.lastError != null -> tr("не запустился: ", "did not start: ") + TorrEngine.lastError
+        else -> tr("выключен", "off")
+    }
+
+    private fun cacheLabel(mb: Int): String =
+        if (mb > 0) "$mb MB" else tr("авто, ", "auto, ") + "${TorrSettings.autoCacheMb(TorrSettings.totalRamMb(this))} MB"
+
+    private fun pickCache() {
+        val opts = TorrSettings.CACHE_CHOICES.map { mb -> Option("$mb", cacheLabel(mb), cacheLabel(mb)) }
+        openSheet(CACHE_KEY, tr("Кэш", "Cache"), opts, "${TorrSettings.cacheMb(this)}") { v ->
+            TorrSettings.setCacheMb(this, v.toInt())
+            if (TorrEngine.isRunning) Thread { runCatching { TorrEngine.applySettings(this) } }.start()
+        }
+    }
+
+    /** Rebuilds the open page and keeps the focus on the same row (a value changed behind it). */
+    private fun reload() {
+        val idx = rowViews().indexOf(currentFocus).takeIf { it >= 0 }
+        showTab(tab)
+        if (idx != null) list.post { (rowViews().getOrNull(idx) ?: firstRow())?.requestFocus() }
+    }
+
+    /** Back from a system screen (overlay permission) or a minute later: the casting and engine pages show fresh state. */
+    override fun onRestart() {
+        super.onRestart()
+        if (tabs[tab].section == null && !sheetOpen) reload()
     }
 
     private fun about(): List<Row> = listOf(
@@ -200,6 +275,7 @@ class SettingsActivity : Activity() {
             else -> row.addView(value, Ui.linear(-2, -2).apply { leftMargin = d(16) })
         }
         if (r is Row.Of) row.tag = r.s
+        if (r is Row.Action && r.key != null) row.tag = r.key
         fun on(): Boolean = when (r) { is Row.Flag -> r.get(); is Row.Of -> (r.s as? Toggle)?.let(cfg::bool) ?: false; else -> false }
         fun paint() {
             val f = row.isFocused
@@ -271,9 +347,12 @@ class SettingsActivity : Activity() {
     }
 
     // ── Выбор из списка ──
-    private fun openSheet(c: Choice) {
+    private fun openSheet(c: Choice) =
+        openSheet(c.key, if (ru) c.ru else c.en, c.options, cfg.string(c)) { cfg.set(c, it) }
+
+    private fun openSheet(key: String, heading: String, options: List<Option>, cur: String, pick: (String) -> Unit) {
         sheetOpen = true
-        overlay.tag = c.key
+        overlay.tag = key
         overlay.removeAllViews()
         overlay.setBackgroundColor(0x80000000.toInt())
         val card = LinearLayout(this).apply {
@@ -282,11 +361,10 @@ class SettingsActivity : Activity() {
             setPadding(d(14), d(22), d(14), d(14))
             elevation = d(12).toFloat()
         }
-        card.addView(Ui.text(this, 20f, Ui.INK, Ui.serif()).apply { text = if (ru) c.ru else c.en; setPadding(d(14), 0, d(14), d(14)) })
+        card.addView(Ui.text(this, 20f, Ui.INK, Ui.serif()).apply { text = heading; setPadding(d(14), 0, d(14), d(14)) })
         val opts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val cur = cfg.string(c)
         var focus: View? = null
-        for (o in c.options) {
+        for (o in options) {
             val sel = o.value == cur
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -308,16 +386,16 @@ class SettingsActivity : Activity() {
             paint()
             row.setOnFocusChangeListener { _, _ -> paint() }
             row.setOnClickListener {
-                cfg.set(c, o.value)
+                pick(o.value)
                 // список перестраиваем, пока фокус в окне выбора, иначе фокус уходит в первый раздел
                 showTab(tab)
-                closeSheet(c.key)
+                closeSheet(key)
             }
             opts.addView(row, Ui.linear(-1, -2).apply { bottomMargin = d(2) })
             if (sel) focus = row
         }
         // длинный список (кодировки, языки) занимает высоту экрана и прокручивается внутри окна
-        val tall = c.options.size > 8
+        val tall = options.size > 8
         card.addView(ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(opts) }, if (tall) Ui.linear(-1, 0, 1f) else Ui.linear(-1, -2))
         overlay.addView(card, Ui.frame(d(420), if (tall) -1 else -2, Gravity.END or Gravity.CENTER_VERTICAL).apply {
             rightMargin = d(48); topMargin = d(36); bottomMargin = d(36)
@@ -336,7 +414,7 @@ class SettingsActivity : Activity() {
     /** Сначала фокус на строку под окном, потом убрать окно: так фокус не падает в первый раздел. */
     private fun closeSheet(key: String?) {
         sheetOpen = false
-        (rowViews().firstOrNull { (it.tag as? Setting)?.key == key } ?: firstRow())?.requestFocus()
+        (rowViews().firstOrNull { (it.tag as? Setting)?.key == key || (key != null && it.tag == key) } ?: firstRow())?.requestFocus()
         overlay.visibility = View.GONE
         overlay.removeAllViews()
     }
@@ -348,6 +426,10 @@ class SettingsActivity : Activity() {
             .setPositiveButton(tr("Сбросить", "Reset")) { _, _ -> cfg.reset(); showTab(tab) }
             .setNegativeButton(tr("Отмена", "Cancel"), null)
             .show()
+    }
+
+    private companion object {
+        const val CACHE_KEY = "torr.cache"
     }
 
     override fun dispatchKeyEvent(e: KeyEvent): Boolean {

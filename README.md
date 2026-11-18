@@ -11,9 +11,16 @@ Lumen Play это простой видеоплеер для Android TV, кот�
 
 - **Файлы**: память устройства и флешки USB. Вся папка становится списком, следующая серия включается сама.
 - **Папки в сети**: общие папки Windows и NAS (SMB), NFS, FTP и SFTP, серверы DLNA. Серверы в той же сети
-  появляются сами, свою папку можно добавить по адресу, логин и пароль хранятся только в приложении.
+  появляются сами, свою папку можно добавить по адресу, логин и пароль хранятся только в приложении
+  (пароль зашифрован ключом из хранилища ключей Android).
 - **Открыть в Lumen Play** из любого приложения: понимает параметры внешних плееров MX Player и VLC
   (название, позиция, список серий, субтитры, заголовки запроса) и возвращает позицию остановки.
+- **Трансляция с телефона (DLNA)**: Lumen Play виден как телевизор в приложениях с кнопкой «На телевизор»
+  (BubbleUPnP, Web Video Cast, VLC, «Передать на устройство» в Windows). Фото открываются на весь экран.
+- **Отправка из браузера**: расширение `extension/` для Chrome отправляет видео со страницы на проектор,
+  браузер подключается один раз по коду с экрана. Протокол: `docs/send-protocol.md`.
+- **Встроенный TorrServer** для Лампы и других приложений: адрес `127.0.0.1:8090`, отдельный TorrServe не нужен.
+  Включается в настройках, раздел TorrServer.
 - **Продолжить просмотр**: на главном экране и в лаунчере (Lumen Home, Google TV). Для файлов с понятным
   названием фильма или сериала лаунчер получает фон из TMDB, иначе кадр из видео.
 - **Два движка, один интерфейс.** Media3 (ExoPlayer) играет MKV, MP4 и TS на аппаратных декодерах, включая
@@ -32,7 +39,8 @@ Lumen Play это простой видеоплеер для Android TV, кот�
 
 ### Сборка
 
-Нужны JDK 17, Android SDK с платформой 36 и Gradle 8.10 или новее в ветке 8.x.
+Нужны JDK 17, Android SDK с платформой 36 и NDK, Gradle 8.10 или новее в ветке 8.x и Go для TorrServer
+(`torrserver/build.sh`, без Go: `gradle -Pkino.noTorrServer ...`, APK без встроенного движка).
 
 ```sh
 export ANDROID_HOME="$HOME/Library/Android/sdk"   # или sdk.dir в local.properties
@@ -46,6 +54,7 @@ gradle assembleDebug testDebugUnitTest
 
 - Код проекта: Apache 2.0 (`LICENSE`).
 - `DoviRpu.kt` и `DoviRenderer.kt` в пакете `dovi`: LGPL-2.1-or-later (порт из FFmpeg и libplacebo).
+- `torrserver/`: TorrServer (GPL-3.0), отдельная программа внутри APK, патчи под GPL-3.0.
 - APK содержит FFmpeg-декодер Jellyfin под GPL-3.0, поэтому APK целиком распространяется на условиях GPL-3.0.
 - Шрифт Inter: SIL Open Font License 1.1 (`app/src/main/assets/fonts/OFL-Inter.txt`). Значки: Material Symbols (Apache 2.0).
 
@@ -58,8 +67,13 @@ Lumen Play is a plain video player for Android TV that we use on projectors runn
 
 - **Files**: device storage and USB sticks; the whole folder becomes a playlist.
 - **Network folders**: Windows shares and NAS (SMB), NFS, FTP, SFTP and DLNA servers. Servers on the same network
-  show up by themselves; logins stay inside the app.
+  show up by themselves; logins stay inside the app, passwords encrypted with an Android Keystore key.
 - **Open with Lumen Play** from any app, with the MX Player and VLC intent extras; the stop position is returned.
+- **Cast from phones (DLNA)**: Lumen Play shows up as a TV in apps that send to a TV (BubbleUPnP, Web Video Cast,
+  VLC, Windows "Cast to device"); photos open full screen.
+- **Send from a browser**: the Chrome extension in `extension/` sends the video of a page to the projector after a
+  one-time code from the screen. Protocol: `docs/send-protocol.md`.
+- **Built-in TorrServer** for Lampa and other apps on `127.0.0.1:8090`, no separate TorrServe needed.
 - **Continue watching** on the home screen and in the launcher, with a TMDB backdrop for recognisable titles.
 - **Two engines, one interface**: Media3 for MKV, MP4, TS, 4K HDR and Dolby Vision; libVLC for legacy formats,
   network folders and as a fallback.
@@ -69,6 +83,7 @@ Lumen Play is a plain video player for Android TV that we use on projectors runn
   and interface (bar timeout, details, clock, remote keys).
 - Light and dark theme following the system.
 
-Build: JDK 17, Android SDK platform 36, Gradle 8.x: `gradle assembleDebug testDebugUnitTest`.
+Build: JDK 17, Android SDK platform 36 with the NDK, Gradle 8.x, Go for TorrServer: `gradle assembleDebug testDebugUnitTest`
+(`-Pkino.noTorrServer` builds without the engine).
 Licence: Apache 2.0 for the project code, LGPL-2.1-or-later for `dovi/DoviRpu.kt` and `dovi/DoviRenderer.kt`,
-GPL-3.0 for the APK as a whole (Jellyfin FFmpeg decoder). Inter: SIL OFL 1.1.
+GPL-3.0 for `torrserver/` (TorrServer) and for the APK as a whole (Jellyfin FFmpeg decoder). Inter: SIL OFL 1.1.

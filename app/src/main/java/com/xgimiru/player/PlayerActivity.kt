@@ -20,6 +20,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
+import com.xgimiru.player.dlna.PlayerBridge
 import com.xgimiru.player.net.NetShares
 import com.xgimiru.player.settings.K
 import com.xgimiru.player.settings.Settings
@@ -35,7 +36,7 @@ import android.graphics.drawable.GradientDrawable
  * приложения передают внешним плеерам (MX Player, VLC), и возвращает, где остановились.
  * Поведение задают настройки плеера ([K]): перемотка, кнопки, продолжение, звук, субтитры.
  */
-class PlayerActivity : Activity(), Engine.Listener {
+class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
 
     private data class Item(val uri: Uri, val title: String, val subs: List<Uri>)
 
@@ -95,6 +96,11 @@ class PlayerActivity : Activity(), Engine.Listener {
     private var loading = false
     private var loadingPct = -1
     private var fellBack = false        // уже переключались на запасной движок для этого файла
+    private var torrentStat: TorrServe.Stat? = null
+    private var ownTorrents = false     // в списке есть видео со встроенного TorrServer (история Lumen Play 1.3)
+    private var engineRestarted = false // перезапускали встроенный движок после сбоя этого файла
+    private var torrRetries = 0         // повторы торрента, который не успел подгрузиться
+    private var torrRetryIndex = -1
     private var startFrom = 0L          // с какой позиции открывали текущий файл (для «попробовать ещё раз»)
     private var chapters: List<Chapters.Chapter> = emptyList()  // главы текущего файла: где титры
     private var chaptersOf: Uri? = null // чьи главы прочитаны или читаются
@@ -123,6 +129,7 @@ class PlayerActivity : Activity(), Engine.Listener {
 
     override fun onStart() {
         super.onStart()
+        if (ownTorrents) TorrService.hold(this, HOLD)
         // вернулись после сна или из другого приложения: открываем видео заново с того же места, на паузе
         stoppedAt?.let { pos ->
             stoppedAt = null
@@ -153,11 +160,15 @@ class PlayerActivity : Activity(), Engine.Listener {
                 engine = null
             }
         }
+        // встроенный TorrServer остановится, если не вернуться к фильму за полторы минуты
+        if (ownTorrents) TorrService.release(this, HOLD)
     }
 
     override fun onDestroy() {
         session?.release()
         session = null
+        PlayerBridge.detach(this, completed)
+        if (ownTorrents) TorrService.release(this, HOLD)
         handler.removeCallbacksAndMessages(null)
         io.shutdownNow()
         engine?.release()
@@ -200,6 +211,7 @@ class PlayerActivity : Activity(), Engine.Listener {
     // ── Открытие ─────────────────────────────────────────────────────────────
     private fun open(intent: Intent) {
         val uri = intent.data ?: run { finish(); return }
+        PlayerBridge.attach(this)
         val baseTitle = intent.getStringExtra("title") ?: intent.getStringExtra("forcename")
             ?: intent.getStringExtra("name") ?: Formats.titleFromPath(uri.lastPathSegment ?: uri.path)
 
@@ -222,6 +234,9 @@ class PlayerActivity : Activity(), Engine.Listener {
                 Item(u, names?.getOrNull(i) ?: Formats.titleFromPath(u.lastPathSegment), itemSubs ?: if (u == uri) subs else emptyList())
             }.also { rememberPlaylist(it) }
         } else restorePlaylist(uri, subs) ?: listOf(Item(uri, baseTitle, subs))
+        val own = items.any { TorrEngine.isOwn(it.uri) }
+        if (own) TorrService.hold(this, HOLD) else if (ownTorrents) TorrService.release(this, HOLD)
+        ownTorrents = own
         @Suppress("DEPRECATION")
         val explicit = (intent.extras?.get("position") as? Number)?.toLong()
             ?: (intent.extras?.get("extra_position") as? Number)?.toLong()
@@ -285,6 +300,10 @@ class PlayerActivity : Activity(), Engine.Listener {
     private fun play(i: Int, startMs: Long, forceVlc: Boolean = false) {
         index = i
         startFrom = startMs
+        if (TorrEngine.isOwn(items[i].uri) && !(TorrEngine.isRunning && items[i].uri.port == TorrEngine.port)) {
+            startTorrEngine(i, startMs, forceVlc)
+            return
+        }
         val item = items[i]
         completed = false
         nextDismissed = false
@@ -317,6 +336,31 @@ class PlayerActivity : Activity(), Engine.Listener {
         showTitles()
         showControls(cfg.osdTimeoutMs)
         onBuffering(true, -1)
+    }
+
+    /**
+     * Встроенный движок не запущен (остановился, пока фильм стоял в фоне) или порт в ссылке от
+     * прошлого запуска: запустить движок, подставить порт во все его ссылки и играть.
+     */
+    private fun startTorrEngine(i: Int, startMs: Long, forceVlc: Boolean) {
+        error.visibility = View.GONE
+        showTitles()
+        onBuffering(true, -1)
+        io.execute {
+            val r = runCatching { TorrEngine.start(this) }
+            handler.post {
+                if (isFinishing || isDestroyed) return@post
+                r.onSuccess {
+                    fun fix(u: Uri) = if (TorrEngine.isOwn(u)) TorrEngine.rebase(u) else u
+                    items = items.map { it.copy(uri = fix(it.uri), subs = it.subs.map(::fix)) }
+                    play(i, startMs, forceVlc)
+                }.onFailure {
+                    onBuffering(false, 100)
+                    errorText.text = tr("TorrServer не запустился: ", "TorrServer did not start: ") + it.message
+                    error.visibility = View.VISIBLE
+                }
+            }
+        }
     }
 
     private fun current(): Item? = items.getOrNull(index)
@@ -388,6 +432,29 @@ class PlayerActivity : Activity(), Engine.Listener {
 
     override fun onError(message: String, fallback: Boolean) {
         onBuffering(false, 100)
+        val item = current()
+        if (item != null && TorrEngine.isOwn(item.uri) && !TorrEngine.isRunning && !engineRestarted) {
+            // встроенный движок остановился (простой в фоне, сбой): поднять и продолжить с того же места
+            engineRestarted = true
+            play(index, engine?.position ?: 0L, forceVlc = engineIsVlc)
+            return
+        }
+        if (item != null && TorrServe.isTorrServe(item.uri) && !fallback) {
+            // торрент не успел подгрузиться (мало сидов, медленная сеть): это не «формат не тот», а пауза
+            // в данных. Ждём и продолжаем с того же места, до 5 раз на одну серию.
+            if (torrRetryIndex != index) { torrRetryIndex = index; torrRetries = 0 }
+            if (torrRetries < 5) {
+                torrRetries++
+                val pos = engine?.position ?: 0L
+                onBuffering(true, 0)
+                handler.postDelayed({ if (!isFinishing) play(index, pos, forceVlc = engineIsVlc) }, 4000)
+                return
+            }
+            errorText.text = tr("Торрент не успевает загружаться: у раздачи мало сидов или медленная сеть.",
+                "The torrent does not load fast enough: few seeders or a slow network.")
+            error.visibility = View.VISIBLE
+            return
+        }
         if (fallback && !engineIsVlc && !fellBack) {
             // Media3 не справился с форматом — пробуем тот же файл на VLC с того же места.
             fellBack = true
@@ -396,7 +463,8 @@ class PlayerActivity : Activity(), Engine.Listener {
             showToast(tr("Включил запасной движок", "Switched to the backup engine"), tr("этот файл лучше играет через VLC", "this file plays better with VLC"), 3500)
             return
         }
-        errorText.text = message
+        errorText.text = if (item != null && TorrEngine.isOwn(item.uri) && !TorrEngine.isRunning)
+            tr("TorrServer остановился", "TorrServer stopped") else message
         error.visibility = View.VISIBLE
     }
 
@@ -404,6 +472,7 @@ class PlayerActivity : Activity(), Engine.Listener {
     private val tick = object : Runnable {
         override fun run() {
             reportSession()
+            reportRemote()
             updateTimes()
             handler.postDelayed(this, 500)
         }
@@ -452,6 +521,15 @@ class PlayerActivity : Activity(), Engine.Listener {
             next.visibility = View.GONE
         }
 
+        // TorrServe: скорость и пиры, пока грузится или открыты панели
+        val item = current()
+        if (item != null && TorrServe.isTorrServe(item.uri) && (buffering.visibility == View.VISIBLE || controlsShown)) {
+            io.execute {
+                val s = TorrServe.stat(item.uri)
+                handler.post { torrentStat = s; showStat() }
+            }
+        }
+
         if (System.currentTimeMillis() - lastSave > 15_000 && e.isPlaying) save()
 
         // Журнал кадров — раз в 5 секунд (logcat на прошивке закрыт)
@@ -465,6 +543,46 @@ class PlayerActivity : Activity(), Engine.Listener {
         }
     }
     private var lastDoviLog = 0L
+
+    private fun showStat() {
+        val s = torrentStat
+        val need = neededMbit(s)
+        val line = when {
+            s == null -> ""
+            s.complete -> tr("загружено полностью", "fully loaded")
+            need > 0 -> tr("↓ %.1f из %.0f Мбит/с · пиров: %d", "↓ %.1f of %.0f Mbit/s · peers: %d").format(s.speedMbit, need, s.peers)
+            else -> tr("↓ %.1f Мбит/с · пиров: %d", "↓ %.1f Mbit/s · peers: %d").format(s.speedMbit, s.peers)
+        }
+        net.text = line
+        net.visibility = if (line.isEmpty()) View.GONE else View.VISIBLE
+        bufferDetail.text = line
+        warnSlowSwarm(s, need)
+    }
+
+    /** Битрейт файла: размер × 8 / длительность, Мбит/с (0: не знаем). */
+    private fun neededMbit(s: TorrServe.Stat?): Double {
+        val dur = engine?.duration ?: 0L
+        if (s == null || s.fileBytes <= 0 || dur < 60_000) return 0.0
+        return s.fileBytes * 8.0 / (dur / 1000.0) / 1e6
+    }
+
+    private var slowSince = 0L
+    private var slowWarnedFor: Uri? = null
+
+    /**
+     * Раздача стабильно медленнее фильма (меньше 90 % битрейта полминуты, во время загрузки): говорим прямо,
+     * один раз на файл. Пауза не спасёт: поможет раздача с большим числом сидов или полегче.
+     */
+    private fun warnSlowSwarm(s: TorrServe.Stat?, need: Double) {
+        val uri = current()?.uri ?: return
+        if (s == null || s.complete || need <= 0 || s.speedMbit >= need * 0.9 || slowWarnedFor == uri) { slowSince = 0; return }
+        val now = System.currentTimeMillis()
+        if (slowSince == 0L) { slowSince = now; return }
+        if (now - slowSince < 30_000 || buffering.visibility != View.VISIBLE) return
+        slowWarnedFor = uri
+        showToast(tr("Раздача медленнее фильма: %.0f из %.0f Мбит/с", "The torrent is slower than the film: %.0f of %.0f Mbit/s").format(s.speedMbit, need),
+            tr("Будут остановки. Выберите раздачу с большим числом сидов или полегче", "Expect pauses. Pick a torrent with more seeders or a lighter one"), 9000)
+    }
 
     private fun showTitles() {
         val item = current() ?: return
@@ -592,15 +710,28 @@ class PlayerActivity : Activity(), Engine.Listener {
         }
     }
 
-    private fun remotePlay() { if (paused && error.visibility != View.VISIBLE) togglePlay() }
-    private fun remotePause() { if (!paused && engine != null) togglePlay() }
-    private fun remoteSeek(ms: Long) {
+    // ── DLNA: состояние для телефона и его команды (см. dlna/PlayerBridge) ──
+    private fun reportRemote() {
+        val e = engine
+        val state = when {
+            error.visibility == View.VISIBLE || completed -> PlayerBridge.State.STOPPED
+            e?.isPlaying == true -> PlayerBridge.State.PLAYING
+            paused -> PlayerBridge.State.PAUSED
+            else -> PlayerBridge.State.LOADING
+        }
+        PlayerBridge.report(this, current()?.uri?.toString(), state, e?.position ?: 0L, e?.duration ?: 0L)
+    }
+
+    override fun remotePlay() { if (paused && error.visibility != View.VISIBLE) togglePlay() }
+    override fun remotePause() { if (!paused && engine != null) togglePlay() }
+    override fun remoteSeek(ms: Long) {
         val e = engine ?: return
         val dur = e.duration
         e.seekTo(if (dur > 0) ms.coerceIn(0, dur - 1000) else ms)
         showControls(3000)
         updateTimes()
     }
+    override fun remoteStop() = finishWithResult()
 
     // ── Пульт ────────────────────────────────────────────────────────────────
     override fun dispatchKeyEvent(e: KeyEvent): Boolean {

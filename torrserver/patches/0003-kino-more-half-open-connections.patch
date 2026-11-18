@@ -1,0 +1,25 @@
+Kino: more half-open connections per torrent
+
+The torrent library dials at most HalfOpenConnsPerTorrent peers at once
+(default 25) and TorrServer never raised it. On a big swarm most dials wait
+10-20 s for an answer, so new seeders were picked up slowly: on the Z9X a
+45 Mbit/s BD-Remux sat at 15-26 Mbit/s with 25 of 25 half-open slots in use
+and about 100 known peers. Allow 3/4 of the connection limit (at least 25).
+
+ server/torr/btserver.go | 5 +++++
+ 1 file changed, 5 insertions(+)
+diff --git a/server/torr/btserver.go b/server/torr/btserver.go
+--- a/server/torr/btserver.go
++++ b/server/torr/btserver.go
+@@ -122,6 +122,11 @@
+ 	bt.config.HTTPUserAgent = userAgent
+ 	bt.config.ExtendedHandshakeClientVersion = cliVers
+ 	bt.config.EstablishedConnsPerTorrent = settings.BTsets.ConnectionsLimit
++	// Kino: dial more peers at once (library default 25), so a big swarm fills up quickly
++	bt.config.HalfOpenConnsPerTorrent = settings.BTsets.ConnectionsLimit * 3 / 4
++	if bt.config.HalfOpenConnsPerTorrent < 25 {
++		bt.config.HalfOpenConnsPerTorrent = 25
++	}
+ 	bt.config.TotalHalfOpenConns = 500
+ 	// Encryption/Obfuscation
+ 	bt.config.EncryptionPolicy = torrent.EncryptionPolicy{ //	OE

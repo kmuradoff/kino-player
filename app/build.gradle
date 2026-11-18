@@ -16,8 +16,10 @@ android {
         applicationId 'com.xgimiru.player'
         minSdk 26
         targetSdk 34
-        versionCode 17
-        versionName '1.3'
+        versionCode 18
+        versionName '2.0'
+        // версия встроенного TorrServer (тег upstream), для экрана настроек
+        buildConfigField 'String', 'TORRSERVER', "\"${rootProject.file('torrserver/VERSION').text.trim()}\""
         // Ключ TMDB (обложки, описания, поиск фильмов) — только с машины сборки, в git его нет:
         // путь в local.properties (lumen.tmdbKeyFile), иначе ~/.lumen-keys/tmdb.txt. Без файла — пустая строка, TMDB выключен.
         def tmdbFile = new File((local['lumen.tmdbKeyFile'] ?: System.getProperty('user.home') + '/.lumen-keys/tmdb.txt') as String)
@@ -25,7 +27,10 @@ android {
     }
     buildFeatures { buildConfig true }
 
-    // Библиотеки в APK сжаты: так APK меньше (распаковываются при установке).
+    // Встроенный TorrServer, собранный torrserver/build.sh, едет в APK как lib/<abi>/libtorrserver.so. Это программа,
+    // а не библиотека: запустить её можно только распакованной в nativeLibraryDir, поэтому библиотеки в APK сжаты
+    // и распаковываются при установке (так APK ещё и меньше).
+    sourceSets.main.jniLibs.srcDirs += rootProject.file('torrserver/out/jniLibs')
     packaging { jniLibs { useLegacyPackaging true } }
     // Шрифт хранится в APK без сжатия: иначе Android распаковывает копию на каждый Typeface.
     androidResources { noCompress 'ttf' }
@@ -69,6 +74,15 @@ android {
     }
 }
 
+// Сборка движка перед сборкой APK (пропускает, если ничего не менялось). Нужны Go и NDK,
+// без них: gradle -Pkino.noTorrServer ... (APK без встроенного движка).
+def buildTorrServer = tasks.register('buildTorrServer', Exec) {
+    commandLine 'bash', rootProject.file('torrserver/build.sh').path
+}
+if (!project.hasProperty('kino.noTorrServer')) {
+    tasks.named('preBuild') { dependsOn buildTorrServer }
+}
+
 dependencies {
     implementation 'org.jetbrains.kotlin:kotlin-stdlib:1.9.24'
     // Движок — libVLC: играет всё (AVI/XviD, DTS, ASS, …). Интерфейс — свой.
@@ -84,6 +98,6 @@ dependencies {
     implementation "androidx.media3:media3-exoplayer-dash:$media3"
     implementation 'org.jellyfin.media3:media3-ffmpeg-decoder:1.6.1+2'
     testImplementation 'junit:junit:4.13.2'
-    // org.json в android.jar пустой для тестов на JVM: настоящий, только для тестов
+    // org.json в android.jar пустой для тестов на JVM: настоящий, только для тестов (send/SendProtocol, сетевые папки)
     testImplementation 'org.json:json:20231013'
 }

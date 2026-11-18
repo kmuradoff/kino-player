@@ -1,0 +1,57 @@
+Kino: no Bonjour by default in the "kino" build
+
+Kino runs the server on 127.0.0.1 only, so announcing it on the LAN (mDNS)
+is pointless, and with the old default it did so for a few seconds on the
+first start, until Kino switched it off over /settings. Without the tag the
+default stays on.
+
+ server/settings/bonjour_full.go | 6 ++++++
+ server/settings/bonjour_kino.go | 6 ++++++
+ server/settings/btsets.go       | 4 ++--
+ 3 files changed, 14 insertions(+), 2 deletions(-)
+diff --git a/server/settings/bonjour_full.go b/server/settings/bonjour_full.go
+new file mode 100644
+index 0000000..8daaf63
+--- /dev/null
++++ b/server/settings/bonjour_full.go
+@@ -0,0 +1,6 @@
++//go:build !kino
++
++package settings
++
++// defaultBonjour: announce TorrServer on the LAN (mDNS) unless the settings say otherwise.
++const defaultBonjour = true
+diff --git a/server/settings/bonjour_kino.go b/server/settings/bonjour_kino.go
+new file mode 100644
+index 0000000..60d6e92
+--- /dev/null
++++ b/server/settings/bonjour_kino.go
+@@ -0,0 +1,6 @@
++//go:build kino
++
++package settings
++
++// The Kino build listens on 127.0.0.1 only, so there is nothing to announce on the LAN.
++const defaultBonjour = false
+diff --git a/server/settings/btsets.go b/server/settings/btsets.go
+index 0f028f0..a0b41be 100644
+--- a/server/settings/btsets.go
++++ b/server/settings/btsets.go
+@@ -212,7 +212,7 @@ func SetDefaultConfig() {
+ 	sets.StoreSettingsInJson = true
+ 	sets.EnableLPD = true
+ 	sets.LPDIPv6 = false
+-	sets.EnableBonjour = true
++	sets.EnableBonjour = defaultBonjour
+ 	sets.MergeAllM3U = false
+ 	// Set default TMDB settings
+ 	sets.TMDBSettings = TMDBConfig{
+@@ -253,7 +253,7 @@ func loadBTSets() {
+ 			var raw map[string]json.RawMessage
+ 			if json.Unmarshal(buf, &raw) == nil {
+ 				if _, ok := raw["EnableBonjour"]; !ok {
+-					BTsets.EnableBonjour = true
++					BTsets.EnableBonjour = defaultBonjour
+ 				}
+ 			}
+ 			// Upgrade older configs that never had tracker list fields.

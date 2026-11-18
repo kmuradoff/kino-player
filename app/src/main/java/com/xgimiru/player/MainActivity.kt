@@ -175,6 +175,10 @@ class MainActivity : Activity(), Host {
         val testUrl = intent.getStringExtra("update_url")
         if (testUrl != null) Updater.setTestUrl(this, testUrl)
         if (!updating) Updater.check(this, testUrl != null) { showUpdate(it) }
+        // TorrServer for Lampa (127.0.0.1:8090) runs all the time when that mode is on
+        if (TorrSettings.shared(this)) TorrService.hold(this, TorrService.SHARED)
+        // DLNA and browser send: Lumen Play is visible to phones as a TV (unless switched off in the settings)
+        com.xgimiru.player.dlna.DlnaService.sync(this)
     }
 
     override fun onPause() {

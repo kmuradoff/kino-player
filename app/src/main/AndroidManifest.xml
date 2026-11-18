@@ -8,9 +8,16 @@
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <!-- субтитры .srt/.ass рядом с видео на флешке: без него Android показывает приложению только сами видео -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
-    <!-- папки в сети: поиск серверов SMB, DLNA и mDNS в локальной сети (libVLC) -->
+    <!-- папки в сети: поиск серверов SMB, DLNA и mDNS в локальной сети (libVLC), DLNA-рендерер (dlna/DlnaService): поиск SSDP по Wi-Fi, смена сети -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- встроенный TorrServer (TorrService) и его запуск при включении в режиме для Лампы, приёмник видео (DlnaService) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- видео с телефона или из браузера открывается, даже когда Lumen Play в фоне -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- «Продолжить просмотр» лаунчера: свои строки WatchNextPrograms -->
     <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />
 
@@ -70,6 +77,33 @@
             </intent-filter>
         </activity>
         <activity android:name=".SettingsActivity" android:exported="false" />
+
+        <!-- встроенный TorrServer: работает, пока смотрите торрент или всё время в режиме для Лампы (127.0.0.1:8090) -->
+        <service
+            android:name=".TorrService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+        <receiver android:name=".TorrService$Boot" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- DLNA: телефоны и компьютеры видят Lumen Play как телевизор, плюс приёмник «Отправить на Lumen Play» из браузера -->
+        <service
+            android:name=".dlna.DlnaService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+        <receiver android:name=".dlna.DlnaService$Boot" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <!-- после обновления Lumen Play приёмник видео поднимается сам, без открытия приложения -->
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+        <activity android:name=".dlna.ImageActivity" android:exported="false" android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation|smallestScreenSize|uiMode"
+            android:theme="@style/Kino.Player" />
 
         <!-- ответ системного установщика на обновление «Кино» (Updater) -->
         <receiver android:name=".Updater$Done" android:exported="false" />
