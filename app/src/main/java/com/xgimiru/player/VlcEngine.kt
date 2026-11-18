@@ -127,7 +127,8 @@ class VlcEngine(ctx: Context, private val host: FrameLayout, private val listene
         }
         player.media = media
         media.release()
-        for (s in subs) player.addSlave(IMedia.Slave.Type.Subtitle, s, false)
+        val pick = cfg.string(K.SUB_LANG) !in setOf("off", "forced")
+        subs.forEachIndexed { i, s -> player.addSlave(IMedia.Slave.Type.Subtitle, s, pick && i == 0) }
         player.play()
     }
 

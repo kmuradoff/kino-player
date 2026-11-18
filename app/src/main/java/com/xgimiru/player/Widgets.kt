@@ -14,8 +14,9 @@ import android.util.AttributeSet
 import android.view.View
 import android.view.animation.DecelerateInterpolator
 
-private val ACCENT = Color.rgb(255, 122, 89)
-private val ACCENT_WARM = Color.rgb(255, 181, 97)
+// Lumen 2.0: полоса над видео белая, акцент голубой
+private val ACCENT = Color.WHITE
+private val ACCENT_WARM = Color.rgb(110, 155, 242)
 
 /**
  * Полоса времени: дорожка, загруженная часть, просмотренная часть градиентом.

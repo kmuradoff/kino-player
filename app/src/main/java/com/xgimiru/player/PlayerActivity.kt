@@ -850,11 +850,16 @@ class PlayerActivity : Activity(), Engine.Listener {
         if (selected) setColor(Color.WHITE) else setColor(Color.TRANSPARENT)
     }
 
+    /** Цвет строки панели: тёмный на светлой подложке фокуса, иначе светлый. */
+    private fun ink(normal: Int) = android.content.res.ColorStateList(
+        arrayOf(intArrayOf(android.R.attr.state_focused), intArrayOf()), intArrayOf(0xFF0E1014.toInt(), normal))
+
     private fun item(text: String, selected: Boolean): TextView = TextView(this).apply {
         this.text = text
         tag = if (selected) "selected" else null
         textSize = 19f
-        setTextColor(if (selected) Color.WHITE else getColor(R.color.text_dim))
+        setTextColor(ink(if (selected) Color.WHITE else getColor(R.color.text_dim)))
+        compoundDrawableTintList = ink(Color.WHITE)
         typeface = if (selected) Typeface.create("sans-serif-medium", Typeface.NORMAL) else Typeface.DEFAULT
         background = getDrawable(R.drawable.item_bg)
         setPadding(dp(16), dp(13), dp(16), dp(13))
@@ -882,7 +887,7 @@ class PlayerActivity : Activity(), Engine.Listener {
     private fun action(text: String, onClick: () -> Unit) {
         panelList.addView(item(text, false).apply {
             setCompoundDrawablesRelative(null, null, null, null)
-            setTextColor(Color.WHITE)
+            setTextColor(ink(Color.WHITE))
             setOnClickListener { onClick() }
         }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
     }
@@ -894,8 +899,8 @@ class PlayerActivity : Activity(), Engine.Listener {
         fun paint() { v.text = (if (ru) s.ru else s.en) + "   " + Settings.stepLabel(s, get(), ru) }
         paint()
         v.tag = "stepper"
-        val l = getDrawable(R.drawable.ic_chevron_left)!!.mutate().apply { setTint(Color.WHITE); setBounds(0, 0, dp(20), dp(20)) }
-        val r = getDrawable(R.drawable.ic_chevron_right)!!.mutate().apply { setTint(Color.WHITE); setBounds(0, 0, dp(20), dp(20)) }
+        val l = getDrawable(R.drawable.ic_chevron_left)!!.mutate().apply { setBounds(0, 0, dp(20), dp(20)) }
+        val r = getDrawable(R.drawable.ic_chevron_right)!!.mutate().apply { setBounds(0, 0, dp(20), dp(20)) }
         v.setCompoundDrawablesRelative(l, null, r, null)
         v.setOnKeyListener { _, code, ev ->
             val dir = when (code) { KeyEvent.KEYCODE_DPAD_LEFT -> -1; KeyEvent.KEYCODE_DPAD_RIGHT -> 1; else -> 0 }

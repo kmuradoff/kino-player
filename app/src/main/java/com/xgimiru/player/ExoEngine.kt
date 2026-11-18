@@ -222,8 +222,10 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
                 .clearOverridesOfType(C.TRACK_TYPE_VIDEO).build()
             trackSelector.setParameters(trackParams(trackSelector.buildUponParameters()))
             pending.clear(); subView.setCues(emptyList())
-            val subConfigs = subs.map {
-                MediaItem.SubtitleConfiguration.Builder(it).setMimeType(subtitleMime(it)).setLanguage(subtitleLanguage(it)).build()
+            // первый внешний файл (лучший по языку) отмечен «по умолчанию»: в режиме «Как отмечено в файле» он и включится
+            val subConfigs = subs.mapIndexed { i, u ->
+                MediaItem.SubtitleConfiguration.Builder(u).setMimeType(subtitleMime(u)).setLanguage(subtitleLanguage(u))
+                    .setSelectionFlags(if (i == 0) C.SELECTION_FLAG_DEFAULT else 0).build()
             }
             val item = MediaItem.Builder().setUri(uri).setSubtitleConfigurations(subConfigs)
             StreamRequest.streamMime(mimeHint, uri.path, uri.query)?.let { item.setMimeType(it) }
