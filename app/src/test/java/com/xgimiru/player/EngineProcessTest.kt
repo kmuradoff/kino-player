@@ -58,7 +58,7 @@ class EngineProcessTest {
             fail("started")
         } catch (x: IOException) {
             assertTrue(x.message!!, x.message!!.startsWith("port 8090 is busy"))
-            assertTrue(x.message!!.contains("TorrServer"))
+            assertTrue(x.message!!.contains("another TorrServe"))
         }
         assertFalse(e.isRunning)
     }
