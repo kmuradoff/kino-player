@@ -21,13 +21,15 @@ Lumen Play это простой видеоплеер для Android TV, кот�
   браузер подключается один раз по коду с экрана. Протокол: `docs/send-protocol.md`.
 - **Встроенный TorrServer** для Лампы и других приложений: адрес `127.0.0.1:8090`, отдельный TorrServe не нужен.
   Включается в настройках, раздел TorrServer.
+- **Magnet-ссылки и файлы .torrent** открываются сразу: Lumen Play показывает видео из торрента как папку и
+  играет их через встроенный TorrServer. Файлы .torrent видны и в папках на флешке.
 - **Продолжить просмотр**: на главном экране и в лаунчере (Lumen Home, Google TV). Для файлов с понятным
   названием фильма или сериала лаунчер получает фон из TMDB, иначе кадр из видео.
-- **Два движка, один интерфейс.** Media3 (ExoPlayer) играет MKV, MP4 и TS на аппаратных декодерах, включая
-  4K HDR и Dolby Vision. libVLC берёт старые форматы, сетевые папки и подхватывает файл, если Media3 не справился.
+- **Движок Media3** (ExoPlayer) играет всё, что может, на аппаратных декодерах, включая 4K HDR и Dolby Vision,
+  и папки SMB. libVLC берёт только NFS, FTP, SFTP и старые форматы, которые Media3 не открывает.
 - **Настройки плеера, как в Kodi.**
-  - Видео: движок, декодер (аппаратный, программный), туннельный режим, Dolby Vision 5 (SDR или HDR10),
-    масштаб, соотношение сторон, деинтерлейсинг (VLC), продолжение с места остановки, шаг перемотки и
+  - Видео: декодер (аппаратный, программный), туннельный режим, Dolby Vision 5 (SDR или HDR10),
+    масштаб, соотношение сторон, продолжение с места остановки, шаг перемотки и
     ускорение при удержании, большой шаг, скорость при запуске, следующая серия.
   - Звук: язык, передача на ресивер по форматам (AC3, E-AC3, Atmos в E-AC3, TrueHD, DTS, DTS-HD), сведение
     в стерео, задержка звука, усиление громкости, ночной режим.
@@ -35,7 +37,7 @@ Lumen Play это простой видеоплеер для Android TV, кот�
     файлы .srt и .ass рядом с видео, кодировка (сама определяет UTF-8, Windows-1251, KOI8-R и другие),
     размер, цвет, фон, обводка, жирный шрифт, отступ снизу, задержка, стиль из файла.
   - Интерфейс: когда прятать панель, сведения о видео и звуке, часы, кнопки пульта (OK, вверх и вниз).
-- Светлая и тёмная тема по системе, шрифт Inter.
+- Тёмная тема, светлую можно включить в настройках. Шрифт Inter.
 
 ### Сборка
 
@@ -65,23 +67,25 @@ gradle assembleDebug testDebugUnitTest
 Lumen Play is a plain video player for Android TV that we use on projectors running
 [Lumen OS](https://github.com/Project-Lumen-OS/lumen-os). It is built for a TV remote.
 
-- **Files**: device storage and USB sticks; the whole folder becomes a playlist.
+- **Files**: device storage and USB sticks, the whole folder becomes a playlist.
 - **Network folders**: Windows shares and NAS (SMB), NFS, FTP, SFTP and DLNA servers. Servers on the same network
-  show up by themselves; logins stay inside the app, passwords encrypted with an Android Keystore key.
-- **Open with Lumen Play** from any app, with the MX Player and VLC intent extras; the stop position is returned.
+  show up by themselves, logins stay inside the app, passwords encrypted with an Android Keystore key.
+- **Open with Lumen Play** from any app, with the MX Player and VLC intent extras, and the stop position is returned.
 - **Cast from phones (DLNA)**: Lumen Play shows up as a TV in apps that send to a TV (BubbleUPnP, Web Video Cast,
-  VLC, Windows "Cast to device"); photos open full screen.
+  VLC, Windows "Cast to device"), photos open full screen.
 - **Send from a browser**: the Chrome extension in `extension/` sends the video of a page to the projector after a
   one-time code from the screen. Protocol: `docs/send-protocol.md`.
 - **Built-in TorrServer** for Lampa and other apps on `127.0.0.1:8090`, no separate TorrServe needed.
+- **Magnet links and .torrent files** open at once: the videos of the torrent show up like a folder and play
+  through the built-in TorrServer. .torrent files also show up in the folders of a USB stick.
 - **Continue watching** on the home screen and in the launcher, with a TMDB backdrop for recognisable titles.
-- **Two engines, one interface**: Media3 for MKV, MP4, TS, 4K HDR and Dolby Vision; libVLC for legacy formats,
-  network folders and as a fallback.
-- **Kodi-style player settings**: video (engine, decoder, tunnelling, zoom, aspect, deinterlacing, resume, seek steps,
+- **Media3 engine** for everything it can play on the hardware decoders, 4K HDR, Dolby Vision and SMB folders
+  included. libVLC only for NFS, FTP, SFTP and legacy formats Media3 refuses.
+- **Kodi-style player settings**: video (decoder, tunnelling, zoom, aspect, resume, seek steps,
   speed), audio (language, passthrough per format, downmix, delay, boost, night mode), subtitles (when to show,
   external files, character set detection incl. Windows-1251, size, colour, background, edge, position, delay)
   and interface (bar timeout, details, clock, remote keys).
-- Light and dark theme following the system.
+- Dark theme, a light one can be picked in the settings. Inter font.
 
 Build: JDK 17, Android SDK platform 36 with the NDK, Gradle 8.x, Go for TorrServer: `gradle assembleDebug testDebugUnitTest`
 (`-Pkino.noTorrServer` builds without the engine).
