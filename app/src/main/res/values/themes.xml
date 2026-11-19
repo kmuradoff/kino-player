@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Kino" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">@drawable/home_bg</item>
+        <item name="android:windowBackground">@color/field</item>
         <item name="android:colorAccent">@color/accent</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
@@ -14,13 +14,25 @@
     </style>
     <style name="Lumen.Dialog" parent="android:Theme.Material.Dialog.Alert">
         <item name="android:windowBackground">@drawable/dialog_bg</item>
-        <item name="android:colorAccent">#FFF2B26B</item>
-        <item name="android:textColorPrimary">#FFF4EFE6</item>
-        <item name="android:textColorSecondary">#FFC9C1B4</item>
-        <item name="android:textColorHint">#FF8E867A</item>
-        <item name="android:colorControlNormal">#FF8E867A</item>
-        <item name="android:colorControlActivated">#FFF2B26B</item>
-        <item name="android:colorBackground">#FF1C1A17</item>
+        <item name="android:colorAccent">#FF3B78E7</item>
+        <item name="android:textColorPrimary">#FFF2F3F5</item>
+        <item name="android:textColorSecondary">#FFAEB3BB</item>
+        <item name="android:textColorHint">#FF80858D</item>
+        <item name="android:colorControlNormal">#FF80858D</item>
+        <item name="android:colorControlActivated">#FF3B78E7</item>
+        <item name="android:colorBackground">#FF1C1D20</item>
+        <item name="android:buttonBarButtonStyle">@style/Lumen.DialogButton</item>
+        <item name="android:defaultFocusHighlightEnabled">false</item>
+    </style>
+    <style name="Lumen.Dialog.Light" parent="android:Theme.Material.Light.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/dialog_bg_light</item>
+        <item name="android:colorAccent">#FF3B78E7</item>
+        <item name="android:textColorPrimary">#FF16171A</item>
+        <item name="android:textColorSecondary">#FF474B52</item>
+        <item name="android:textColorHint">#FF6D7179</item>
+        <item name="android:colorControlNormal">#FF6D7179</item>
+        <item name="android:colorControlActivated">#FF3B78E7</item>
+        <item name="android:colorBackground">#FFEBE9E5</item>
         <item name="android:buttonBarButtonStyle">@style/Lumen.DialogButton</item>
         <item name="android:defaultFocusHighlightEnabled">false</item>
     </style>

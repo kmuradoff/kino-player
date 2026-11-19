@@ -43,27 +43,9 @@ object DlnaSettings {
     /** Без разрешения «поверх других окон» Android не даёт открыть плеер, пока Lumen Play в фоне. */
     fun canOpenFromBackground(ctx: Context) = Settings.canDrawOverlays(ctx)
 
-    /**
-     * Раздел в настройках. header и row: функции SettingsActivity (row: текст, подсказка,
-     * отмечен ли пункт, действие), чтобы раздел выглядел как остальные.
-     */
-    fun section(a: Activity, header: (String) -> Unit, row: (String, String?, Boolean?, () -> Unit) -> Unit) {
-        val on = enabled(a)
-        header(tr("Трансляция с телефона и компьютера", "Casting from phones and computers"))
-        row(tr("Включено", "On"), tr(
-            "Lumen Play виден как телевизор «${friendlyName(a)}» в приложениях с кнопкой «На телевизор» (DLNA): " +
-                "BubbleUPnP, Web Video Cast, VLC, «Передать на устройство» в Windows",
-            "Lumen Play shows up as the TV \"${friendlyName(a)}\" in apps that send to a TV over DLNA: " +
-                "BubbleUPnP, Web Video Cast, VLC, Windows \"Cast to device\""), on) { setEnabled(a, true) }
-        row(tr("Выключено", "Off"), null, !on) { setEnabled(a, false) }
-        if (on && !canOpenFromBackground(a)) {
-            row(tr("Разрешить открываться поверх других приложений…", "Allow opening over other apps…"),
-                tr("Нужно, чтобы видео с телефона открывалось, даже когда Lumen Play не на экране",
-                    "Needed so videos from a phone open even when Lumen Play is not on screen"), null) {
-                runCatching {
-                    a.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${a.packageName}")))
-                }
-            }
-        }
-    }
+    /** Screen where the user allows opening over other apps. */
+    fun overlayIntent(a: Activity): Intent? = listOf(
+        Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${a.packageName}")),
+        Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION),
+    ).firstOrNull { it.resolveActivity(a.packageManager) != null }
 }

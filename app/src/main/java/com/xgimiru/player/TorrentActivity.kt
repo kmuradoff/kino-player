@@ -8,78 +8,131 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Parcelable
 import android.provider.OpenableColumns
-import android.view.Gravity
+import android.view.KeyEvent
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
-import com.xgimiru.player.torrents.humanSize
-import com.xgimiru.player.ui.Backdrop
+import androidx.media3.common.util.UnstableApi
+import com.xgimiru.player.files.FolderPane
+import com.xgimiru.player.media.Fmt
+import com.xgimiru.player.settings.playerSettings
+import com.xgimiru.player.torrent.TorrentFiles
+import com.xgimiru.player.torrent.TorrentSource
+import com.xgimiru.player.ui.Nav
+import com.xgimiru.player.ui.Rail
 import com.xgimiru.player.ui.Ui
+import com.xgimiru.player.ui.emptyState
 import com.xgimiru.player.ui.tr
 import org.json.JSONObject
 import java.util.concurrent.Executors
 
 /**
- * Открывает magnet-ссылку или .torrent-файл: отдаёт торрент движку (встроенному или внешнему
- * TorrServe, см. [TorrSettings]), ждёт список файлов и показывает видео из него. Одно видео
- * запускается сразу; из нескольких выбираем, остальные идут в плеер списком серий.
+ * Opens a magnet link or a .torrent file in the built-in TorrServer. The left column tells what the torrent is
+ * and how it loads, the right side is the same table as a folder of a stick: the videos of the torrent with
+ * their folders. One video plays at once.
  */
-class TorrentActivity : Activity() {
-
-    private lateinit var backdrop: Backdrop
-    private lateinit var heading: TextView
-    private lateinit var status: TextView
-    private lateinit var list: LinearLayout
+@UnstableApi
+class TorrentActivity : Activity(), Nav {
     private val handler = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
     @Volatile private var alive = true
-    private var builtin = false
     private val who get() = "torrent@" + System.identityHashCode(this)
-    private fun d(v: Number) = Ui.dp(this, v)
+    private val p = { v: Number -> Ui.px(this, v) }
+    private val ru get() = tr("ru", "en") == "ru"
+
+    private lateinit var content: FrameLayout
+    private lateinit var heading: android.widget.TextView
+    private lateinit var facts: LinearLayout
+    private var pane: FolderPane? = null
+    private var base: String? = null
+    private var hash: String? = null
+    private var files: TorrentFiles? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Ui.init(this)
-        val frame = FrameLayout(this)
-        backdrop = Backdrop(this)
-        frame.addView(backdrop, Ui.frame(-1, -1))
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(d(56), d(44), d(56), d(24))
-        }
-        root.addView(Ui.text(this, 13f, Ui.INK2, Ui.bold()).apply { letterSpacing = 0.16f; text = tr("ТОРРЕНТ", "TORRENT") })
-        heading = Ui.text(this, 32f, Ui.INK, Ui.serif(), 2).apply { text = intent.getStringExtra(EXTRA_TITLE) ?: tr("Торрент", "Torrent") }
-        root.addView(heading, Ui.linear(d(780), -2).apply { topMargin = d(8) })
-        status = Ui.text(this, 16f, Ui.INK2, Ui.sans(), 3).apply { setLineSpacing(0f, 1.25f) }
-        root.addView(status, Ui.linear(d(780), -2).apply { topMargin = d(10); bottomMargin = d(16) })
-        list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        root.addView(ScrollView(this).apply {
-            isVerticalScrollBarEnabled = false
-            clipToPadding = false
-            addView(list)
-        }, LinearLayout.LayoutParams(-1, 0, 1f))
-        frame.addView(root, Ui.frame(-1, -1))
-        setContentView(frame)
-        backdrop.show(intent.getStringExtra(EXTRA_BACKDROP))
+        window.setBackgroundDrawable(Ui.field())
+        val root = FrameLayout(this)
+        content = FrameLayout(this).apply { clipChildren = false; clipToPadding = false }
+        root.addView(content, Ui.frame(-1, -1).apply { leftMargin = p(432) })
+        root.addView(side(), Ui.frame(p(432), -1))
+        setContentView(root)
 
         val uri = intent.data ?: run { finish(); return }
-        builtin = TorrSettings.builtin(this)
+        heading.text = TorrentFiles.magnetName(uri.toString()) ?: displayName(uri)?.removeSuffix(".torrent") ?: tr("Торрент", "Torrent")
+        loading(tr("Запускаю TorrServer…", "Starting TorrServer…"))
+        if (!TorrEngine.isAvailable(this)) {
+            fail(tr("В этой сборке Lumen Play нет встроенного TorrServer.", "This Lumen Play build has no built-in TorrServer."))
+            return
+        }
         io.execute { load(uri) }
+    }
+
+    /** The left column: brand, what the torrent is, how it loads. */
+    private fun side(): View = FrameLayout(this).apply {
+        setBackgroundColor(Ui.RAIL)
+        addView(Rail.brand(this@TorrentActivity), Ui.frame(-1, p(52)).apply { leftMargin = p(36); rightMargin = p(28); topMargin = p(52) })
+        val col = LinearLayout(this@TorrentActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(p(16), 0, 0, 0) }
+        col.addView(Ui.t(this@TorrentActivity, 17, 650, Ui.T3, spacing = 2.4f).apply { text = tr("ТОРРЕНТ", "TORRENT") })
+        heading = Ui.t(this@TorrentActivity, 34, 680, Ui.T1, 4, spacing = -.5f).apply { setLineSpacing(0f, 1.12f) }
+        col.addView(heading, Ui.linear(-1, -2).apply { topMargin = p(16) })
+        facts = LinearLayout(this@TorrentActivity).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(facts, Ui.linear(-1, -2).apply { topMargin = p(30) })
+        addView(col, Ui.frame(-1, -2).apply { leftMargin = p(36); rightMargin = p(28); topMargin = p(150) })
+    }
+
+    private fun fact(k: String, v: String) {
+        facts.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(Ui.t(this@TorrentActivity, 21, 450, Ui.T3).apply { text = k }, Ui.linear(p(130), -2))
+            addView(Ui.t(this@TorrentActivity, 21, 450, Ui.T1, 2).apply { text = v }, Ui.linear(0, -2, 1f))
+        }, Ui.linear(-1, -2).apply { if (facts.childCount > 0) topMargin = p(12) })
+    }
+
+    /** Videos, size, peers and speed of the torrent. */
+    private fun showFacts(st: JSONObject?) {
+        facts.removeAllViews()
+        files?.let { f ->
+            fact(tr("Видео", "Videos"), f.videos.size.toString())
+            f.videos.sumOf { it.length }.takeIf { it > 0 }?.let { fact(tr("Размер", "Size"), Fmt.size(it, ru)) }
+        }
+        if (st != null) {
+            val peers = st.optInt("active_peers"); val seeds = st.optInt("connected_seeders")
+            fact(tr("Пиры", "Peers"), if (seeds > 0) tr("$peers, раздают $seeds", "$peers, $seeds seeding") else "$peers")
+            val speed = st.optDouble("download_speed", 0.0)
+            if (speed > 0) fact(tr("Скорость", "Speed"), tr("%.1f МБ/с", "%.1f MB/s").format(speed / 1e6))
+        }
+    }
+
+    private fun loading(text: String) {
+        if (pane != null) return
+        content.removeAllViews()
+        content.addView(emptyState(this, tr("Открываю торрент", "Opening the torrent"), text, null, null), Ui.at(this, 56, 150))
+    }
+
+    private fun fail(text: String) {
+        pane = null
+        content.removeAllViews()
+        val v = emptyState(this, tr("Торрент не открылся", "The torrent did not open"), text, tr("Назад", "Back")) { finish() }
+        content.addView(v, Ui.at(this, 56, 150))
+        v.post { v.getChildAt(v.childCount - 1)?.requestFocus() }
     }
 
     override fun onStart() {
         super.onStart()
-        if (builtin) TorrService.hold(this, who)
+        TorrService.hold(this, who)
+        handler.post(tick)
     }
 
-    override fun onResume() { super.onResume(); backdrop.resume() }
-    override fun onPause() { backdrop.pause(); super.onPause() }
+    override fun onRestart() {
+        super.onRestart()
+        pane?.onShow()      // back from the player: watched marks and progress
+    }
 
     override fun onStop() {
         super.onStop()
-        if (builtin) TorrService.release(this, who)
+        handler.removeCallbacks(tick)
+        TorrService.release(this, who)
     }
 
     override fun onDestroy() {
@@ -89,252 +142,98 @@ class TorrentActivity : Activity() {
         super.onDestroy()
     }
 
-    private fun say(text: String) {
-        handler.post { status.text = text }
-    }
-
-    private fun fail(text: String) {
-        handler.post {
-            status.text = text
-            status.setTextColor(Ui.ACCENT)
+    /** Peers and speed every 3 seconds while the screen is open. */
+    private val tick = object : Runnable {
+        override fun run() {
+            val b = base; val h = hash
+            if (b != null && h != null && files != null) io.execute {
+                val st = runCatching { TorrApi.status(b, h) }.getOrNull()
+                handler.post { if (alive && files != null) showFacts(st) }
+            }
+            handler.postDelayed(this, 3000)
         }
     }
 
-    // ── В фоне ───────────────────────────────────────────────────────────────
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_BACK && pane?.onBack() == true) return true
+        return super.onKeyDown(keyCode, event)
+    }
+
+    // Nav: the torrent screen has no left list to open
+    override fun open(place: String) {}
+    override fun refreshRail() {}
+    override fun focusRail() {}
+
+    // ── In the background ──
+    private fun say(text: String) = handler.post { if (alive) loading(text) }
+    private fun failLater(text: String) { handler.post { if (alive) fail(text) } }
+
     private fun load(uri: Uri) {
         try {
-            val base = if (builtin) {
-                say(tr("Запускаю торрент-движок…", "Starting the torrent engine…"))
-                TorrEngine.start(this)
-            } else {
-                val addr = TorrSettings.external(this)
-                    ?: return fail(tr("Не задан адрес TorrServe. Укажите его в настройках или включите встроенный движок.",
-                        "No TorrServe address. Set it in Settings or turn on the built-in engine."))
-                say(tr("Подключаюсь к TorrServe $addr…", "Connecting to TorrServe $addr…"))
-                if (!TorrApi.alive(addr)) return fail(tr("TorrServe не отвечает по адресу $addr. Проверьте, что он запущен.",
-                    "TorrServe does not answer at $addr. Check that it is running."))
-                addr
-            }
+            val b = TorrEngine.start(this)
             say(tr("Добавляю торрент…", "Adding the torrent…"))
             val added = when (uri.scheme?.lowercase()) {
-                "magnet", "http", "https" -> TorrApi.add(base, uri.toString(), intent.getStringExtra(EXTRA_TITLE), intent.getStringExtra(EXTRA_POSTER))
-                else -> TorrApi.upload(base, readTorrent(uri), displayName(uri))
+                "magnet", "http", "https" -> TorrApi.add(b, uri.toString(), TorrentFiles.magnetName(uri.toString()))
+                else -> TorrApi.upload(b, readTorrent(uri), displayName(uri) ?: "file.torrent")
             }
-            val hash = added.optString("hash").ifEmpty { return fail(tr("Движок не принял торрент.", "The engine did not accept the torrent.")) }
-            var st: JSONObject = added
+            val h = added.optString("hash").ifEmpty { return failLater(tr("TorrServer не принял этот торрент.", "TorrServer did not take this torrent.")) }
+            var st = added
             val started = System.currentTimeMillis()
             while (alive && TorrApi.files(st).isEmpty()) {
-                if (st.optInt("stat") == 4) return fail(tr("Не удалось получить данные торрента: никто не раздаёт или нет сети.",
-                    "Could not get the torrent data: nobody is seeding or there is no network."))
-                if (System.currentTimeMillis() - started > 180_000) return fail(tr("Данные торрента не пришли за 3 минуты. Попробуйте позже.",
-                    "The torrent data did not arrive in 3 minutes. Try later."))
+                if (st.optInt("stat") == 4) return failLater(tr("Не удалось получить список файлов: никто не раздаёт или нет сети.",
+                    "Could not get the file list: nobody is seeding or there is no network."))
+                if (System.currentTimeMillis() - started > 180_000) return failLater(tr("Список файлов не пришёл за 3 минуты. Попробуйте позже.",
+                    "The file list did not arrive in 3 minutes. Try again later."))
                 val peers = st.optInt("active_peers").takeIf { it > 0 } ?: st.optInt("total_peers")
-                say(tr("Получаю данные торрента…", "Getting the torrent data…") + if (peers > 0) tr("   ·   пиров: $peers", "   ·   peers: $peers") else "")
+                say(tr("Получаю список файлов…", "Getting the file list…") + if (peers > 0) tr("\nПиров: $peers", "\nPeers: $peers") else "")
                 Thread.sleep(1000)
-                st = TorrApi.status(base, hash)
+                st = TorrApi.status(b, h)
             }
             if (!alive) return
-            val title = st.optString("title").ifBlank { st.optString("name") }.ifBlank { tr("Торрент", "Torrent") }
-            val files = TorrApi.files(st)
-            val videos = files.filter { isVideo(it.path) }.sortedWith { a, b -> natural(a.path, b.path) }
-            val subs = files.filter { isSubtitle(it.path) }
-            handler.post { show(base, hash, title, videos, subs) }
+            val title = st.optString("title").ifBlank { st.optString("name") }.ifBlank { null }
+            val tree = TorrentFiles(TorrApi.files(st))
+            handler.post { if (alive) show(b, h, title, tree, st) }
         } catch (e: InterruptedException) {
-            // экран закрыли
+            // the screen was closed
         } catch (t: Throwable) {
-            fail(tr("Не получилось открыть торрент: ", "Could not open the torrent: ") + (t.message ?: t.toString()))
+            failLater(tr("Не получилось открыть торрент: ", "Could not open the torrent: ") + (t.message ?: t.toString()))
         }
     }
 
     private fun readTorrent(uri: Uri): ByteArray {
         val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
-            ?: throw IllegalStateException("файл не читается")
-        if (bytes.size > 16 * 1024 * 1024 || bytes.isEmpty() || bytes[0] != 'd'.code.toByte()) {
-            throw IllegalStateException("это не .torrent-файл")
-        }
+            ?: throw IllegalStateException(tr("файл не читается", "the file cannot be read"))
+        if (!TorrentFiles.looksLikeTorrent(bytes)) throw IllegalStateException(tr("это не файл .torrent", "this is not a .torrent file"))
         return bytes
     }
 
-    private fun displayName(uri: Uri): String {
-        val name = runCatching {
-            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
-                if (it.moveToFirst()) it.getString(0) else null
-            }
-        }.getOrNull()
-        return name ?: uri.lastPathSegment ?: "file.torrent"
-    }
-
-    // ── Список файлов ────────────────────────────────────────────────────────
-    /** Что показано в списке: после возврата из плеера список строится заново (новые отметки и фокус). */
-    private var shown: (() -> Unit)? = null
-
-    override fun onRestart() {
-        super.onRestart()
-        shown?.invoke()
-    }
-
-    private fun show(base: String, hash: String, title: String, videos: List<TorrApi.FileInfo>, subs: List<TorrApi.FileInfo>) {
-        shown = { afterPlayer(hash, videos.map { TorrApi.streamUri(base, hash, it, builtin) }); show(base, hash, title, videos, subs) }
-        heading.text = title
-        if (videos.isEmpty()) {
-            fail(tr("В этом торренте нет видео.", "There is no video in this torrent."))
-            return
+    private fun displayName(uri: Uri): String? = runCatching {
+        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+            if (it.moveToFirst()) it.getString(0) else null
         }
-        val uris = videos.map { TorrApi.streamUri(base, hash, it, builtin) }
-        val names = videos.map { Formats.titleFromPath(it.name) }
-        // субтитры рядом с видео: «Фильм.ru.srt», «Subs/Фильм.srt» (но не «Фильм1…» для «Фильм»); если видео одно, то все
-        fun subsFor(i: Int): List<Uri> {
-            val stem = videos[i].name.substringBeforeLast('.').lowercase() + "."
-            return subs.filter { videos.size == 1 || it.name.lowercase().startsWith(stem) }
-                .map { TorrApi.streamUri(base, hash, it, builtin) }
-        }
-        fun play(i: Int) { markOpened(hash, i); play(title, uris, names, i, videos.indices.map(::subsFor)) }
-        if (videos.size == 1) {
-            play(0)
+    }.getOrNull() ?: uri.lastPathSegment?.takeIf { uri.scheme != "magnet" }
+
+    // ── The videos ──
+    private fun show(b: String, h: String, title: String?, tree: TorrentFiles, st: JSONObject) {
+        base = b; hash = h; files = tree
+        title?.let { heading.text = it }
+        showFacts(st)
+        if (tree.videos.isEmpty()) { fail(tr("В этом торренте нет видео.", "There is no video in this torrent.")); return }
+        val source = TorrentSource(this, heading.text.toString(), b, h, tree) { tr("Встроенный TorrServer", "Built-in TorrServer") }
+        if (tree.videos.size == 1) {
+            val v = tree.videos[0]
+            val subs = tree.subsFor(v, SubPrep.langs(playerSettings())).map { Uri.parse(source.stream(it)) }
+            val i = Intent(this, PlayerActivity::class.java).setData(Uri.parse(source.stream(v))).putExtra("title", heading.text.toString())
+            if (subs.isNotEmpty()) i.putExtra("subs", subs.toTypedArray<Parcelable>())
+            startActivity(i)
             finish()
             return
         }
-        status.text = tr("Видео в торренте: ${videos.size}. Выберите, с чего начать.", "Videos in the torrent: ${videos.size}. Choose where to start.")
-        list.removeAllViews()
-        val history = History.all(this).associateBy { it.key }
-        val seasons = videos.map { Name.parse(it.name).season?.toIntOrNull() ?: Name.parse(it.path.replace('/', ' ')).season?.toIntOrNull() }
-        val severalSeasons = seasons.filterNotNull().distinct().size > 1
-        val rows = arrayOfNulls<View>(videos.size)
-        var lastSeason: Int? = null
-        videos.forEachIndexed { i, f ->
-            // в торренте несколько сезонов: заголовок перед первой серией каждого
-            if (severalSeasons && seasons[i] != null && seasons[i] != lastSeason) {
-                lastSeason = seasons[i]
-                list.addView(Ui.text(this, 13f, Ui.ACCENT, Ui.bold()).apply {
-                    letterSpacing = 0.14f
-                    text = tr("СЕЗОН ${seasons[i]}", "SEASON ${seasons[i]}")
-                }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = d(if (list.childCount == 0) 0 else 14); bottomMargin = d(6); leftMargin = d(20) })
-            }
-            val row = row(names[i], f, history[History.key(uris[i])]) { play(i) }
-            rows[i] = row
-            list.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = d(4) })
-        }
-        val focus = resumeIndex(hash, uris, history, seasons, intent.getIntExtra(EXTRA_SEASON, 0))
-        list.post { rows[focus]?.requestFocus() }
-    }
-
-    /**
-     * С какой серии продолжить. Плеер убирает досмотренную серию из истории, поэтому кроме истории
-     * помним, какую серию открывали отсюда ([opened]). Последнее по времени и решает: недосмотренная
-     * серия из истории или открытая отсюда (а если её досмотрели, то следующая). Ничего не смотрели,
-     * а на странице сериала выбран сезон: первая серия этого сезона.
-     */
-    private fun resumeIndex(hash: String, uris: List<Uri>, history: Map<String, History.Entry>, seasons: List<Int?>, season: Int): Int {
-        var focus = -1
-        var latest = 0L
-        uris.forEachIndexed { i, u ->
-            val e = history[History.key(u)]
-            if (e != null && e.updated > latest) { latest = e.updated; focus = i }
-        }
-        val rec = opened(hash)
-        if (rec != null && rec.second > latest && rec.first in uris.indices) return rec.first
-        if (focus >= 0) return focus
-        if (season > 0) seasons.indexOfFirst { it == season }.takeIf { it >= 0 }?.let { return it }
-        return 0
-    }
-
-    private fun prefs() = getSharedPreferences("torrent_opened", MODE_PRIVATE)
-
-    /** Какую серию торрента открывали отсюда последней и когда. */
-    private fun opened(hash: String): Pair<Int, Long>? = prefs().getString(hash, null)?.split('|')?.let {
-        val i = it.getOrNull(0)?.toIntOrNull(); val t = it.getOrNull(1)?.toLongOrNull()
-        if (i != null && t != null) i to t else null
-    }
-
-    private fun markOpened(hash: String, i: Int) = prefs().edit().putString(hash, "$i|${System.currentTimeMillis()}").apply()
-
-    /**
-     * Вернулись из плеера. Серии, открытой отсюда, в истории нет, а смотрели дольше 10 минут: её
-     * досмотрели (плеер убрал её из истории), продолжать со следующей.
-     */
-    private fun afterPlayer(hash: String, uris: List<Uri>) {
-        val rec = opened(hash) ?: return
-        val history = History.all(this).associateBy { it.key }
-        val newer = uris.any { (history[History.key(it)]?.updated ?: 0L) >= rec.second }
-        if (!newer && System.currentTimeMillis() - rec.second > 10 * 60_000L && rec.first + 1 < uris.size) markOpened(hash, rec.first + 1)
-    }
-
-    private fun row(name: String, f: TorrApi.FileInfo, e: History.Entry?, onClick: () -> Unit): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(d(20), d(13), d(20), d(13))
-            isFocusable = true
-            isClickable = true
-            val r = d(12).toFloat()
-            val nameView = Ui.text(this@TorrentActivity, 18f, Ui.INK, Ui.medium()).apply { text = name }
-            val side = Ui.text(this@TorrentActivity, 15f, Ui.INK3).apply {
-                text = when {
-                    e == null -> size(f.length)
-                    e.finished -> tr("просмотрено", "watched")
-                    else -> tr("осталось ${Time.human(e.duration - e.position)}", "${Time.human(e.duration - e.position)} left")
-                }
-                setPadding(d(16), 0, 0, 0)
-                if (e != null && !e.finished) setTextColor(Ui.ACCENT)
-            }
-            addView(nameView, LinearLayout.LayoutParams(0, -2, 1f))
-            addView(side)
-            setOnFocusChangeListener { _, has ->
-                background = if (has) Ui.rounded(Ui.INK, r) else null
-                nameView.setTextColor(if (has) Ui.GROUND else Ui.INK)
-                side.setTextColor(if (has) Ui.GROUND else if (e != null && !e.finished) Ui.ACCENT else Ui.INK3)
-            }
-            setOnClickListener { onClick() }
-        }
-
-    /** subs: субтитры каждой серии, по списку на серию. */
-    private fun play(title: String, uris: List<Uri>, names: List<String>, i: Int, subs: List<List<Uri>>) {
-        val intent = Intent(this, PlayerActivity::class.java)
-            .setData(uris[i])
-            .putExtra("title", if (uris.size == 1) names[0] else title)
-        if (subs[i].isNotEmpty()) intent.putExtra("subs", subs[i].toTypedArray<Parcelable>())
-        if (uris.size > 1) {
-            intent.putExtra("video_list", uris.toTypedArray<Parcelable>())
-            intent.putExtra("video_list.name", names.toTypedArray())
-            intent.putExtra("video_list.subs", subs.map { it.joinToString("\n") }.toTypedArray())
-        }
-        startActivity(intent)
-    }
-
-    private fun size(bytes: Long): String = humanSize(bytes).ifEmpty { tr("${(bytes shr 10).coerceAtLeast(1)} КБ", "${(bytes shr 10).coerceAtLeast(1)} KB") }
-
-    companion object {
-        /** От страницы фильма: название и постер для движка, фон, выбранный сезон. */
-        const val EXTRA_TITLE = "lumen.title"
-        const val EXTRA_POSTER = "lumen.poster"
-        const val EXTRA_BACKDROP = "lumen.backdrop"
-        const val EXTRA_SEASON = "lumen.season"
-
-        private val VIDEO = setOf(
-            "mkv", "mp4", "m4v", "avi", "ts", "m2ts", "mts", "mov", "wmv", "asf", "webm", "mpg", "mpeg",
-            "vob", "flv", "divx", "3gp", "ogm", "rm", "rmvb", "m2v",
-        )
-
-        private val SUBTITLES = setOf("srt", "ass", "ssa", "vtt")
-
-        fun isVideo(path: String) = path.substringAfterLast('.', "").lowercase() in VIDEO
-
-        fun isSubtitle(path: String) = path.substringAfterLast('.', "").lowercase() in SUBTITLES
-
-        /** «Серия 2» раньше «Серия 10». */
-        fun natural(a: String, b: String): Int {
-            val re = Regex("\\d+|\\D+")
-            val x = re.findAll(a.lowercase()).map { it.value }.toList()
-            val y = re.findAll(b.lowercase()).map { it.value }.toList()
-            for (k in 0 until minOf(x.size, y.size)) {
-                val p = x[k]; val q = y[k]
-                val c = if (p[0].isDigit() && q[0].isDigit()) {
-                    p.trimStart('0').length.compareTo(q.trimStart('0').length).takeIf { it != 0 }
-                        ?: p.trimStart('0').compareTo(q.trimStart('0'))
-                } else p.compareTo(q)
-                if (c != 0) return c
-            }
-            return x.size.compareTo(y.size)
-        }
+        val fp = FolderPane(this, this, source)
+        pane = fp
+        content.removeAllViews()
+        content.addView(fp.view, Ui.frame(-1, -1))
+        fp.onShow()
+        content.post { fp.focusFirst() }
     }
 }

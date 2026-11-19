@@ -11,7 +11,7 @@ import java.nio.ByteBuffer
 /**
  * Главы MKV: где в серии начинаются титры. Media3 главы из Matroska не отдаёт, поэтому читаем их
  * сами: начало файла (заголовок EBML, SeekHead), а если главы дальше, то только их кусок по
- * ссылке из SeekHead. По HTTP это запросы с Range, и TorrServer отдаёт их как обычный поток.
+ * ссылке из SeekHead. По HTTP это запросы с Range, их отдаёт любой потоковый сервер.
  */
 object Chapters {
     class Chapter(val startMs: Long, val names: List<String>)

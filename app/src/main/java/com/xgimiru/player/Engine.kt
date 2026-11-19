@@ -3,9 +3,8 @@ package com.xgimiru.player
 import android.net.Uri
 
 /**
- * Движок воспроизведения. Интерфейс «Кино» один, движков два:
- *  - [ExoEngine] (Media3) — современные MKV/MP4/TS: правильный Dolby Vision и плавный 4K HDR;
- *  - [VlcEngine] (libVLC) — старьё вроде AVI/XviD и запасной вариант, если Media3 не справился.
+ * Playback engine. Media3 ([ExoEngine]) plays everything it can, libVLC ([VlcEngine]) only what Media3 cannot:
+ * NFS, FTP and SFTP folders and formats Media3 refuses. The choice is made by [EngineRules].
  */
 interface Engine {
 
@@ -16,8 +15,8 @@ interface Engine {
         fun onBuffering(active: Boolean, percent: Int)
         fun onTracksChanged()
         fun onEnded()
-        /** [fallback] — стоит попробовать другой движок (формат/кодек не пошёл). */
-        fun onError(message: String, fallback: Boolean)
+        /** [problem] tells [EngineRules] whether another engine may help (format, unreadable SMB server). */
+        fun onError(message: String, problem: EngineRules.Problem)
         /** Движок сам встал на паузу: звук ушёл с Bluetooth или наушников (AUDIO_BECOMING_NOISY). */
         fun onPausedBySystem() {}
     }
@@ -52,6 +51,9 @@ interface Engine {
     /** null — «Авто», адаптивный выбор по скорости сети. */
     fun selectVideo(id: String?) {}
 
+    /** Chips of the player panel title: 4K, HDR10, Dolby Vision, Atmos. */
+    fun badges(): List<String> = emptyList()
+
     /** «4K · HEVC · Dolby Vision» */
     fun videoInfo(): String?
     fun audioInfo(): String?
@@ -61,13 +63,17 @@ interface Engine {
     /** 0 — целиком, 1 — заполнить с обрезкой, 2 — растянуть. */
     fun setScale(mode: Int)
 
+    /** Соотношение сторон из настроек: "auto", "16:9", "2.35"... */
+    fun setAspect(value: String) {}
+    /** Задержка звука, мс: плюс — звук позже. */
+    fun setAudioDelay(ms: Int) {}
+    /** Задержка субтитров, мс: плюс — позже. */
+    fun setSubtitleDelay(ms: Int) {}
+
+    /** Subtitles step over the progress bar while it is shown ([px] up, 0 back). */
+    fun liftSubtitles(px: Int) {}
+    /** Кодировка внешних субтитров для движка, который читает их сам (VLC). null — как решит движок. */
+    fun setSubtitleEncoding(charset: String?) {}
+
     fun release()
-
-    companion object {
-        /** Форматы, которые Media3 играет плохо или не играет вовсе. */
-        private val LEGACY = setOf("avi", "divx", "wmv", "asf", "flv", "vob", "mpg", "mpeg", "rm", "rmvb", "3gp", "ogm")
-
-        fun prefersVlc(uri: Uri): Boolean =
-            uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase() in LEGACY
-    }
 }

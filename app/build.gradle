@@ -16,8 +16,8 @@ android {
         applicationId 'com.xgimiru.player'
         minSdk 26
         targetSdk 34
-        versionCode 17
-        versionName '1.3'
+        versionCode 18
+        versionName '2.0'
         // версия встроенного TorrServer (тег upstream), для экрана настроек
         buildConfigField 'String', 'TORRSERVER', "\"${rootProject.file('torrserver/VERSION').text.trim()}\""
         // Ключ TMDB (обложки, описания, поиск фильмов) — только с машины сборки, в git его нет:
@@ -27,12 +27,17 @@ android {
     }
     buildFeatures { buildConfig true }
 
-    // Встроенный торрент-движок: TorrServer, собранный torrserver/build.sh, едет в APK как
-    // lib/<abi>/libtorrserver.so. Это программа, а не библиотека: запустить её можно только
-    // распакованной в nativeLibraryDir, поэтому библиотеки в APK сжаты и распаковываются при
-    // установке (extractNativeLibs="true").
+    // Встроенный TorrServer, собранный torrserver/build.sh, едет в APK как lib/<abi>/libtorrserver.so. Это программа,
+    // а не библиотека: запустить её можно только распакованной в nativeLibraryDir, поэтому библиотеки в APK сжаты
+    // и распаковываются при установке (так APK ещё и меньше).
     sourceSets.main.jniLibs.srcDirs += rootProject.file('torrserver/out/jniLibs')
-    packaging { jniLibs { useLegacyPackaging true } }
+    packaging {
+        jniLibs { useLegacyPackaging true }
+        // smbj brings BouncyCastle, a multi-release jar: its Java 9+ manifests clash in the APK
+        resources { excludes += ['META-INF/versions/9/OSGI-INF/MANIFEST.MF', 'META-INF/DEPENDENCIES', 'META-INF/LICENSE.md', 'META-INF/NOTICE.md'] }
+    }
+    // Шрифт хранится в APK без сжатия: иначе Android распаковывает копию на каждый Typeface.
+    androidResources { noCompress 'ttf' }
 
     // Два APK вместо одного на 100 МБ: arm64-v8a (Z9X и всё 64-битное) и armeabi-v7a (32-битные
     // приставки и телевизоры). Код у них один, отличаются только библиотеки VLC и FFmpeg.
@@ -40,7 +45,8 @@ android {
         abi {
             enable true
             reset()
-            include 'arm64-v8a', 'armeabi-v7a'
+            // -Pkino.abis=x86 собирает APK для эмулятора (проверка экранов), выпуск всегда два ARM
+            include(*((project.findProperty('kino.abis') ?: 'arm64-v8a,armeabi-v7a') as String).split(','))
             universalApk false
         }
     }
@@ -72,8 +78,8 @@ android {
     }
 }
 
-// Сборка движка перед сборкой APK (пропускает, если ничего не менялось). Нужны Go и NDK;
-// без них: gradle -Pkino.noTorrServer ... (APK без встроенного движка, работает только внешний TorrServe).
+// Сборка движка перед сборкой APK (пропускает, если ничего не менялось). Нужны Go и NDK,
+// без них: gradle -Pkino.noTorrServer ... (APK без встроенного движка).
 def buildTorrServer = tasks.register('buildTorrServer', Exec) {
     commandLine 'bash', rootProject.file('torrserver/build.sh').path
 }
@@ -83,19 +89,22 @@ if (!project.hasProperty('kino.noTorrServer')) {
 
 dependencies {
     implementation 'org.jetbrains.kotlin:kotlin-stdlib:1.9.24'
-    // Движок — libVLC: играет всё (AVI/XviD, DTS, ASS, …). Интерфейс — свой.
+    // Engine: Media3 plays everything it can decode (Dolby Vision, HDR, tunnelling, passthrough).
+    // libVLC only browses network folders and plays NFS, FTP, SFTP and the formats Media3 refuses (old AVI, RMVB, WMV).
     implementation 'org.videolan.android:libvlc-all:3.6.5'
-    // Второй движок — только для Dolby Vision профиля 5: у чипа есть аппаратный
-    // декодер DV, а VLC его не использует и показывает фиолетовую картинку.
     def media3 = '1.6.1'
     implementation "androidx.media3:media3-exoplayer:$media3"
     implementation "androidx.media3:media3-ui:$media3"
-    // Потоки из браузера (send/) и IPTV: HLS (.m3u8) и DASH (.mpd). Без них DefaultMediaSourceFactory падает
+    // Потоки из других приложений: HLS (.m3u8) и DASH (.mpd). Без них DefaultMediaSourceFactory падает
     // с ClassNotFoundException HlsMediaSource$Factory.
     implementation "androidx.media3:media3-exoplayer-hls:$media3"
     implementation "androidx.media3:media3-exoplayer-dash:$media3"
     implementation 'org.jellyfin.media3:media3-ffmpeg-decoder:1.6.1+2'
+    // SMB 2/3 for Media3: network folders on Windows and NAS play through the same engine as local files.
+    // libVLC stays only for NFS, FTP, SFTP and for files Media3 cannot decode.
+    implementation('com.hierynomus:smbj:0.14.0') { exclude group: 'org.slf4j' }
+    implementation 'org.slf4j:slf4j-nop:2.0.9'
     testImplementation 'junit:junit:4.13.2'
-    // org.json в android.jar пустой для тестов на JVM: настоящий, только для тестов (send/SendProtocol)
+    // org.json в android.jar пустой для тестов на JVM: настоящий, только для тестов (send/SendProtocol, сетевые папки)
     testImplementation 'org.json:json:20231013'
 }

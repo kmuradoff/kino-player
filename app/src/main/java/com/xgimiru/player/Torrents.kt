@@ -4,6 +4,8 @@ import android.app.ActivityManager
 import android.content.Context
 import android.net.Uri
 import android.system.Os
+import com.xgimiru.player.torrent.TorrentFiles
+import com.xgimiru.player.ui.tr
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -15,57 +17,32 @@ import java.net.URL
 import java.util.concurrent.TimeUnit
 
 /**
- * Где «Кино» берёт торренты. Встроенный движок, если не задан адрес внешнего TorrServe: тогда
- * отдельное приложение TorrServe не нужно. Ссылки на видео от Лампы и других приложений играют
- * как раньше, какой бы режим ни был выбран.
+ * Built-in TorrServer settings. Lumen Play plays torrent links that other apps (Lampa) hand over, the engine
+ * itself serves them on 127.0.0.1:8090 while the "for other apps" mode is on.
  */
 object TorrSettings {
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("torrents", Context.MODE_PRIVATE)
 
-    /** true: встроенный движок. По умолчанию он, если не задан адрес внешнего TorrServe. */
-    fun builtin(ctx: Context): Boolean {
-        if (!TorrEngine.isAvailable(ctx)) return false
-        val p = prefs(ctx)
-        return if (p.contains("builtin")) p.getBoolean("builtin", true) else external(ctx) == null
-    }
-
-    fun setBuiltin(ctx: Context, on: Boolean) = prefs(ctx).edit().putBoolean("builtin", on).apply()
-
-    /** Адрес внешнего TorrServe, например http://192.168.1.10:8090, или null. */
-    fun external(ctx: Context): String? = prefs(ctx).getString("external", null)
-
-    fun setExternal(ctx: Context, addr: String?) =
-        prefs(ctx).edit().putString("external", addr?.let { normalize(it) }).apply()
-
-    /** «192.168.1.10» → «http://192.168.1.10:8090»; пустая строка → null. */
-    fun normalize(addr: String): String? {
-        var a = addr.trim().trimEnd('/')
-        if (a.isEmpty()) return null
-        if (!a.contains("://")) a = "http://$a"
-        val u = Uri.parse(a)
-        return if (u.port == -1) "${u.scheme}://${u.host}:8090" else "${u.scheme}://${u.host}:${u.port}"
-    }
-
-    /** Память под кэш встроенного движка в МБ; 0 = подобрать по объёму памяти устройства. */
+    /** Engine cache in MB, 0 = chosen from the device memory. */
     fun cacheMb(ctx: Context) = prefs(ctx).getInt("cacheMb", 0)
 
     fun setCacheMb(ctx: Context, mb: Int) = prefs(ctx).edit().putInt("cacheMb", mb).apply()
 
-    fun effectiveCacheMb(ctx: Context) = cacheMb(ctx).takeIf { it > 0 } ?: autoCacheMb(ctx)
+    fun effectiveCacheMb(ctx: Context) = cacheMb(ctx).takeIf { it > 0 } ?: autoCacheMb(totalRamMb(ctx))
 
-    /** 48 МБ до 1,2 ГБ памяти, 64 до 1,8, 96 до 2,5, дальше 256: 4K-ремуксу нужен запас на 20-30 секунд. */
-    fun autoCacheMb(ctx: Context): Int {
-        val mb = totalRamMb(ctx)
-        return when {
-            mb < 1229 -> 48
-            mb < 1843 -> 64
-            mb < 2560 -> 96
-            else -> 256
-        }
+    /** 48 MB up to 1.2 GB of memory, 64 up to 1.8, 96 up to 2.5, then 256: a 4K remux needs 20-30 seconds ahead. */
+    fun autoCacheMb(ramMb: Long): Int = when {
+        ramMb < 1229 -> 48
+        ramMb < 1843 -> 64
+        ramMb < 2560 -> 96
+        else -> 256
     }
 
-    /** Одновременных соединений с пирами. У TorrServer по умолчанию 25: на раздаче в сотни пиров качали 16. */
+    /** Peer connections at once. TorrServer's default is 25: a swarm of hundreds gave 16. */
     const val CONNECTIONS = 100
+
+    /** Cache sizes offered in the settings, 0 = automatic. */
+    val CACHE_CHOICES = listOf(0, 48, 64, 96, 128, 256, 512)
 
     fun totalRamMb(ctx: Context): Long {
         val info = ActivityManager.MemoryInfo()
@@ -74,8 +51,8 @@ object TorrSettings {
     }
 
     /**
-     * Движок для других приложений (Лампа): постоянный порт 8090 на 127.0.0.1, работает всё время,
-     * а не только пока «Кино» играет торрент, и запускается при включении устройства.
+     * Engine for other apps (Lampa): fixed port 8090 on 127.0.0.1, runs all the time, not only while Lumen Play
+     * plays a torrent, and starts when the device boots.
      */
     fun shared(ctx: Context) = TorrEngine.isAvailable(ctx) && prefs(ctx).getBoolean("shared", false)
 
@@ -83,28 +60,86 @@ object TorrSettings {
 }
 
 /**
- * Встроенный движок: TorrServer (GPL-3.0, https://github.com/YouROK/TorrServer), собранный отдельной
- * программой и уложенный в APK как lib/<abi>/libtorrserver.so. Android распаковывает его в
- * nativeLibraryDir, откуда его можно запустить. «Кино» держит его дочерним процессом и говорит с ним
- * только по HTTP на 127.0.0.1, поэтому из сети он не виден. Живым его держит [TorrService].
+ * One engine process: start, wait for its answer, stop. No Android in here, so the host tests run it with a
+ * stand-in program.
+ */
+class EngineProcess(
+    private val probe: (port: Int) -> Boolean,
+    private val timeoutMs: Long = 20_000L,
+    private val pollMs: Long = 150L,
+) {
+    @Volatile private var process: Process? = null
+    @Volatile var port = 0
+        private set
+
+    val isRunning get() = process?.isAlive == true
+
+    /** Starts [cmd] listening on [port] and waits until [probe] answers. Throws IOException with the reason. */
+    fun start(cmd: List<String>, port: Int, dir: File, log: File, env: Map<String, String>, sharedPort: Int) {
+        val pb = ProcessBuilder(cmd).directory(dir).redirectErrorStream(true).redirectOutput(log)
+        pb.environment().putAll(env)
+        val proc = pb.start()
+        process = proc
+        this.port = port
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (!(proc.isAlive && probe(port))) {
+            if (!proc.isAlive) {
+                process = null
+                throw IOException(failure(runCatching { log.readLines().takeLast(20) }.getOrDefault(emptyList()), port, sharedPort))
+            }
+            if (System.currentTimeMillis() > deadline) {
+                stop {}
+                throw IOException(tr("движок не ответил за ${timeoutMs / 1000} с", "the engine did not answer in ${timeoutMs / 1000} s"))
+            }
+            Thread.sleep(pollMs)
+        }
+    }
+
+    /** [shutdown] asks the engine to close its database, then SIGTERM, then SIGKILL. */
+    fun stop(shutdown: () -> Unit) {
+        val proc = process ?: return
+        process = null
+        runCatching { shutdown() }
+        if (!proc.waitFor(3, TimeUnit.SECONDS)) {
+            proc.destroy()
+            if (!proc.waitFor(2, TimeUnit.SECONDS)) proc.destroyForcibly()
+        }
+    }
+
+    companion object {
+        /** Plain reason from the last lines of the engine log. */
+        fun failure(tail: List<String>, port: Int, sharedPort: Int): String = when {
+            tail.any { "cannot bind HTTP port" in it || "already in use" in it } ->
+                tr("порт $port занят", "port $port is busy") +
+                    (if (port == sharedPort) tr(": наверное, работает отдельный TorrServe", ": another TorrServe probably runs") else "")
+            else -> tr("движок остановился сразу после запуска", "the engine stopped right after the start") +
+                (tail.lastOrNull { it.isNotBlank() }?.let { ": " + it.takeLast(120) } ?: "")
+        }
+    }
+}
+
+/**
+ * Built-in engine: TorrServer (GPL-3.0, https://github.com/YouROK/TorrServer), built as its own program and
+ * packed into the APK as lib/<abi>/libtorrserver.so. Android unpacks it into nativeLibraryDir, from where it can
+ * run. Lumen Play keeps it as a child process and talks to it over HTTP on 127.0.0.1 only, so the network does
+ * not see it. [TorrService] keeps it alive.
  *
- * Порт обычно случайный и меняется от запуска к запуску. Поэтому ссылки на видео встроенного движка
- * помечены параметром [MARK], и плеер перед открытием подставляет текущий порт ([rebase]).
+ * Old links of the built-in engine (Lumen Play 1.3 history) carry the parameter [MARK] and a port of an old
+ * start: the player puts the current port in before opening them ([rebase]).
  */
 object TorrEngine {
     const val MARK = "kino"
     const val SHARED_PORT = 8090
     private const val EXE = "libtorrserver.so"
-    private const val START_TIMEOUT_MS = 20_000L
 
-    @Volatile private var process: Process? = null
-    @Volatile var port = 0
-        private set
-    /** Почему не запустился в последний раз (для настроек); null, если запустился. */
+    private val engine = EngineProcess({ p -> echo(p) })
+
+    val port get() = engine.port
+    val isRunning get() = engine.isRunning
+
+    /** Why the last start failed (for the settings), null when it started. */
     @Volatile var lastError: String? = null
         private set
-
-    val isRunning get() = process?.isAlive == true
 
     fun isAvailable(ctx: Context) = exe(ctx).isFile
 
@@ -112,18 +147,18 @@ object TorrEngine {
 
     fun base() = "http://127.0.0.1:$port"
 
-    /** Журнал движка за последний запуск. Его видно через adb: logcat на прошивке закрыт. */
+    /** Engine log of the last start, readable over adb (logcat is closed on the firmware). */
     fun logFile(ctx: Context) = File(ctx.getExternalFilesDir(null) ?: ctx.filesDir, "torrserver.log")
 
-    /** Ссылка на видео встроенного движка (с меткой [MARK]). */
+    /** A video link of the built-in engine (with [MARK]). */
     fun isOwn(uri: Uri) = uri.getQueryParameter(MARK) != null && TorrServe.isTorrServe(uri)
 
-    /** Та же ссылка, но на нынешний порт движка. */
+    /** The same link on the current engine port. */
     fun rebase(uri: Uri): Uri = uri.buildUpon().encodedAuthority("127.0.0.1:$port").build()
 
     /**
-     * Запустить, если ещё не запущен, и дождаться ответа. Блокирует до 20 секунд: не из главного потока.
-     * Возвращает адрес движка, при неудаче бросает IOException с понятным текстом.
+     * Starts the engine unless it runs and waits for its answer. Blocks up to 20 seconds: never on the main
+     * thread. Returns the engine address, throws IOException with a plain reason.
      */
     @Synchronized
     fun start(ctx: Context): String = try {
@@ -138,38 +173,22 @@ object TorrEngine {
         val wanted = if (TorrSettings.shared(app)) SHARED_PORT else 0
         if (isRunning && (wanted == 0 || port == wanted)) return base()
         stopLocked()
-        if (!isAvailable(app)) throw IOException("встроенного движка нет в этой сборке «Кино»")
+        if (!isAvailable(app)) throw IOException(tr("встроенного движка нет в этой сборке", "this build has no built-in engine"))
         killStale()
         val dir = File(app.filesDir, "torrserver").apply { mkdirs() }
         val p = if (wanted != 0) wanted else freePort()
-        // на занятом порту /echo ответил бы чужой сервер, и мы приняли бы его за свой
-        if (wanted != 0 && !isFree(p)) throw IOException("порт $p занят: наверное, работает отдельный TorrServe")
-        val log = logFile(app)
-        val pb = ProcessBuilder(exe(app).path, "-p", "$p", "--ip", "127.0.0.1", "-d", dir.path)
-            .directory(dir)
-            .redirectErrorStream(true)
-            .redirectOutput(log)
-        pb.environment().apply {
-            put("GOGC", "50")                    // сборщик мусора чаще: памяти на проекторах мало
-            put("GODEBUG", "madvdontneed=1")     // освобождённая память сразу уходит системе
-            put("TMPDIR", app.cacheDir.path)
-            put("HOME", dir.path)
-        }
-        val proc = pb.start()
-        process = proc
-        port = p
-        val deadline = System.currentTimeMillis() + START_TIMEOUT_MS
-        while (!(echo() && proc.isAlive)) {
-            if (!proc.isAlive) {
-                process = null
-                throw IOException(failure(log, p))
-            }
-            if (System.currentTimeMillis() > deadline) {
-                stopLocked()
-                throw IOException("движок не ответил за ${START_TIMEOUT_MS / 1000} секунд")
-            }
-            Thread.sleep(150)
-        }
+        // on a busy port /echo would answer from another server and we would take it for ours
+        if (wanted != 0 && !isFree(p)) throw IOException(EngineProcess.failure(listOf("already in use"), p, SHARED_PORT))
+        engine.start(
+            listOf(exe(app).path, "-p", "$p", "--ip", "127.0.0.1", "-d", dir.path), p, dir, logFile(app),
+            mapOf(
+                "GOGC" to "50",                     // collect garbage more often: projectors have little memory
+                "GODEBUG" to "madvdontneed=1",      // freed memory goes back to the system at once
+                "TMPDIR" to app.cacheDir.path,
+                "HOME" to dir.path,
+            ),
+            SHARED_PORT,
+        )
         runCatching { applySettings(app) }
         if (wanted == 0) runCatching { prune(app) }
         return base()
@@ -178,20 +197,11 @@ object TorrEngine {
     @Synchronized
     fun stop() = stopLocked()
 
-    private fun stopLocked() {
-        val proc = process ?: return
-        process = null
-        // /shutdown закрывает базу аккуратно; если не ответил, SIGTERM, потом SIGKILL
-        runCatching { TorrApi.get(base(), "/shutdown", 2000) }
-        if (!proc.waitFor(3, TimeUnit.SECONDS)) {
-            proc.destroy()
-            if (!proc.waitFor(2, TimeUnit.SECONDS)) proc.destroyForcibly()
-        }
-    }
+    private fun stopLocked() = engine.stop { TorrApi.get(base(), "/shutdown", 2000) }
 
-    private fun echo() = runCatching { TorrApi.get(base(), "/echo", 1000).isNotBlank() }.getOrDefault(false)
+    private fun echo(port: Int) = runCatching { TorrApi.get("http://127.0.0.1:$port", "/echo", 1000).isNotBlank() }.getOrDefault(false)
 
-    /** Движок, оставшийся от упавшего «Кино», держит базу и порт: убрать. Видны только свои процессы. */
+    /** An engine left by a crashed Lumen Play holds the database and the port: end it. Only own processes are visible. */
     private fun killStale() {
         val uid = android.os.Process.myUid()
         var killed = false
@@ -203,7 +213,7 @@ object TorrEngine {
                 killed = true
             }
         }
-        if (killed) Thread.sleep(500)   // пусть система освободит порт и базу
+        if (killed) Thread.sleep(500)   // let the system free the port and the database
     }
 
     private fun freePort() = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { it.localPort }
@@ -211,19 +221,9 @@ object TorrEngine {
     private fun isFree(port: Int) =
         runCatching { ServerSocket(port, 1, InetAddress.getByName("127.0.0.1")).close() }.isSuccess
 
-    private fun failure(log: File, port: Int): String {
-        val tail = runCatching { log.readLines().takeLast(20) }.getOrDefault(emptyList())
-        return when {
-            tail.any { "cannot bind HTTP port" in it || "already in use" in it } ->
-                "порт $port занят" + (if (port == SHARED_PORT) ": наверное, работает отдельный TorrServe" else "")
-            else -> "движок остановился сразу после запуска" +
-                (tail.lastOrNull { it.isNotBlank() }?.let { ": " + it.takeLast(120) } ?: "")
-        }
-    }
-
     /**
-     * Свои настройки: кэш по памяти устройства, 100 соединений, без DLNA и объявлений в локальной сети (Bonjour).
-     * Смена настроек перезапускает торрент-клиент внутри движка, поэтому только если что-то отличается.
+     * Own settings: cache by device memory, 100 connections, no DLNA and no announcements on the local network
+     * (Bonjour). Changing settings restarts the torrent client inside the engine, so only when something differs.
      */
     fun applySettings(ctx: Context) {
         val sets = JSONObject(TorrApi.post(base(), "/settings", JSONObject().put("action", "get")))
@@ -240,8 +240,8 @@ object TorrEngine {
     }
 
     /**
-     * Торренты в базе движка нужны, только чтобы «Продолжить просмотр» открывался сразу, без поиска
-     * данных торрента заново. Остальные убираем. В режиме для Лампы базу не трогаем: это её список.
+     * Torrents in the engine database are only needed so Continue watching opens at once. The rest goes. In the
+     * mode for other apps the database is left alone: it is Lampa's list.
      */
     private fun prune(ctx: Context) {
         val keep = History.all(ctx).mapNotNull { e ->
@@ -257,12 +257,8 @@ object TorrEngine {
     }
 }
 
-/** JSON API TorrServer (и встроенного, и внешнего). Всё блокирующее: не из главного потока. */
+/** TorrServer JSON API. Everything blocks: never on the main thread. */
 object TorrApi {
-    class FileInfo(val id: Int, val path: String, val length: Long) {
-        val name get() = path.substringAfterLast('/')
-    }
-
     private fun open(url: String, timeout: Int) = (URL(url).openConnection() as HttpURLConnection).apply {
         connectTimeout = timeout.coerceAtMost(5000)
         readTimeout = timeout
@@ -274,7 +270,7 @@ object TorrApi {
             if (code !in 200..299) {
                 val err = runCatching { c.errorStream?.bufferedReader()?.use { it.readText() } }.getOrNull()
                 val msg = err?.let { runCatching { JSONObject(it).optString("error") }.getOrNull() }
-                throw IOException(msg?.takeIf { it.isNotBlank() } ?: "сервер ответил $code")
+                throw IOException(msg?.takeIf { it.isNotBlank() } ?: tr("сервер ответил $code", "the server answered $code"))
             }
             return c.inputStream.bufferedReader().use { it.readText() }
         } finally {
@@ -293,38 +289,16 @@ object TorrApi {
         return read(c)
     }
 
-    fun alive(base: String) = runCatching { get(base, "/echo", 2000).isNotBlank() }.getOrDefault(false)
-
-    /** Добавить magnet, хеш или ссылку на .torrent (её TorrServer скачает сам). Возвращает статус. */
-    fun add(base: String, link: String, title: String? = null, poster: String? = null): JSONObject {
+    /** Adds a magnet, a hash or a link to a .torrent file (the engine downloads it). Returns the status. */
+    fun add(base: String, link: String, title: String? = null): JSONObject {
         val body = JSONObject().put("action", "add").put("link", link).put("save_to_db", true)
-        // название и постер видны в «Моих торрентах» Lumen Play и в списке Лампы
         if (!title.isNullOrBlank()) body.put("title", title)
-        if (!poster.isNullOrBlank()) body.put("poster", poster)
         return JSONObject(post(base, "/torrents", body, 30_000))
     }
 
-    /** Торрент из базы движка: для «Моих торрентов». */
-    class Item(val hash: String, val title: String, val poster: String?, val size: Long, val added: Long)
-
-    /** Торренты в базе движка, новые сверху. */
-    fun list(base: String): List<Item> {
-        val arr = JSONArray(post(base, "/torrents", JSONObject().put("action", "list")))
-        return (0 until arr.length()).map { arr.getJSONObject(it) }.mapNotNull { o ->
-            val hash = o.optString("hash").lowercase().ifEmpty { return@mapNotNull null }
-            Item(hash, o.optString("title").ifBlank { o.optString("name") }.ifBlank { hash.take(12) },
-                o.optString("poster").takeIf { it.startsWith("http") }, o.optLong("torrent_size"), o.optLong("timestamp"))
-        }.sortedByDescending { it.added }
-    }
-
-    /** Убрать торрент из движка (и его кэш). */
-    fun remove(base: String, hash: String) {
-        post(base, "/torrents", JSONObject().put("action", "rem").put("hash", hash))
-    }
-
-    /** Загрузить содержимое .torrent-файла. Возвращает статус. */
+    /** Uploads the content of a .torrent file. Returns the status. */
     fun upload(base: String, torrent: ByteArray, name: String): JSONObject {
-        val boundary = "kino" + System.nanoTime()
+        val boundary = "lumen" + System.nanoTime()
         val c = open("$base/torrent/upload", 30_000)
         c.requestMethod = "POST"
         c.doOutput = true
@@ -350,19 +324,18 @@ object TorrApi {
     fun status(base: String, hash: String): JSONObject =
         JSONObject(post(base, "/torrents", JSONObject().put("action", "get").put("hash", hash)))
 
-    fun files(status: JSONObject): List<FileInfo> {
+    fun files(status: JSONObject): List<TorrentFiles.File> {
         val arr = status.optJSONArray("file_stats") ?: return emptyList()
         return (0 until arr.length()).map { arr.getJSONObject(it) }
-            .map { FileInfo(it.optInt("id"), it.optString("path"), it.optLong("length")) }
+            .map { TorrentFiles.File(it.optInt("id"), it.optString("path"), it.optLong("length")) }
     }
 
-    /** Ссылка на файл торрента для плеера. own: встроенный движок, ставим метку [TorrEngine.MARK]. */
-    fun streamUri(base: String, hash: String, f: FileInfo, own: Boolean): Uri {
-        val b = Uri.parse(base).buildUpon().appendPath("stream").appendPath(f.name)
+    /** Link to one file of the torrent for the player, marked as the built-in engine's ([TorrEngine.MARK]). */
+    fun streamUri(base: String, hash: String, f: TorrentFiles.File): Uri =
+        Uri.parse(base).buildUpon().appendPath("stream").appendPath(f.name)
             .appendQueryParameter("link", hash)
             .appendQueryParameter("index", f.id.toString())
             .appendQueryParameter("play", "")
-        if (own) b.appendQueryParameter(TorrEngine.MARK, "1")
-        return b.build()
-    }
+            .appendQueryParameter(TorrEngine.MARK, "1")
+            .build()
 }

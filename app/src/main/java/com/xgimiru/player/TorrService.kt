@@ -13,12 +13,13 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import com.xgimiru.player.ui.tr
 
 /**
- * Держит встроенный движок ([TorrEngine]) живым, пока он нужен: служба переднего плана (mediaPlayback),
- * иначе прошивка может убить «Кино» вместе с движком посреди фильма. Кто пользуется движком, берёт его
- * через [hold] и отпускает через [release]; когда не держит никто, через 90 секунд движок
- * останавливается. В режиме для Лампы ([TorrSettings.shared]) движок работает всё время.
+ * Keeps the built-in engine ([TorrEngine]) alive while it is needed: a foreground service (mediaPlayback), else
+ * the firmware may end Lumen Play together with the engine in the middle of a film. A user of the engine takes
+ * it with [hold] and gives it back with [release]. When nobody holds it, the engine stops after 90 seconds. In
+ * the mode for other apps ([TorrSettings.shared]) the engine runs all the time.
  */
 class TorrService : Service() {
 
@@ -33,7 +34,7 @@ class TorrService : Service() {
         private var instance: TorrService? = null
         private var app: Context? = null
 
-        /** Вызывать из главного потока, пока приложение на экране. who: кто держит («player», …). */
+        /** Main thread only, while the app is on screen. who: the holder ("player", ...). */
         fun hold(ctx: Context, who: String) {
             app = ctx.applicationContext
             holders += who
@@ -54,7 +55,7 @@ class TorrService : Service() {
             }
         }
 
-        /** Режим для Лампы: движок мог не подняться (порт был занят) или упасть. Поднимаем снова. */
+        /** Mode for other apps: the engine may not have come up (busy port) or may have died. Start it again. */
         private val watch: Runnable = object : Runnable {
             override fun run() {
                 val ctx = app ?: return
@@ -77,9 +78,9 @@ class TorrService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        goForeground()   // обязательно после каждого startForegroundService
-        // Режим для Лампы: если система убила процесс «Кино», она перезапустит службу (START_STICKY),
-        // а здесь движок снова берётся в работу. Раньше он оставался выключенным до перезагрузки.
+        goForeground()   // required after every startForegroundService
+        // Mode for other apps: when the system killed the process it restarts the service (START_STICKY) and
+        // the engine is taken into work again here.
         if (TorrSettings.shared(this) && SHARED !in holders) hold(this, SHARED)
         if (holders.isEmpty()) {
             main.removeCallbacks(idleStop)
@@ -91,14 +92,16 @@ class TorrService : Service() {
     private fun goForeground() {
         val nm = getSystemService(NotificationManager::class.java)
         if (nm.getNotificationChannel(CHANNEL) == null) {
-            nm.createNotificationChannel(NotificationChannel(CHANNEL, "Торренты", NotificationManager.IMPORTANCE_LOW))
+            nm.createNotificationChannel(NotificationChannel(CHANNEL, "TorrServer", NotificationManager.IMPORTANCE_LOW))
         }
-        val open = PendingIntent.getActivity(this, 0, Intent(this, SettingsActivity::class.java),
+        val open = PendingIntent.getActivity(this, 0,
+            Intent(this, SettingsActivity::class.java).putExtra("section", "torrserver"),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val n = Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle("Кино: торрент-движок")
-            .setContentText(if (TorrSettings.shared(this)) "Работает для Лампы и других приложений" else "Работает, пока смотрите торрент")
+            .setContentTitle(tr("Lumen Play: TorrServer", "Lumen Play: TorrServer"))
+            .setContentText(if (TorrSettings.shared(this)) tr("Работает для Лампы и других приложений", "Runs for Lampa and other apps")
+                else tr("Работает, пока смотрите торрент", "Runs while you watch a torrent"))
             .setContentIntent(open)
             .setOngoing(true)
             .build()
@@ -125,7 +128,7 @@ class TorrService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    /** Режим для Лампы: поднять движок после включения устройства. */
+    /** Mode for other apps: start the engine after the device boots. */
     class Boot : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
             if (intent.action == Intent.ACTION_BOOT_COMPLETED && TorrSettings.shared(ctx)) hold(ctx, SHARED)

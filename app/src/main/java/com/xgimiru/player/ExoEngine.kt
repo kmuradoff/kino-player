@@ -18,6 +18,10 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import com.xgimiru.player.net.RoutingDataSource
+import com.xgimiru.player.settings.SubStyle
+import com.xgimiru.player.media.Badges
+import com.xgimiru.player.media.MediaFacts
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -33,6 +37,21 @@ import android.os.Looper
 import android.view.SurfaceView
 import android.view.View
 import androidx.media3.common.VideoSize
+import androidx.media3.common.audio.ChannelMixingAudioProcessor
+import androidx.media3.common.audio.ChannelMixingMatrix
+import androidx.media3.common.text.CueGroup
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.audio.ForwardingAudioSink
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
+import android.media.audiofx.DynamicsProcessing
+import android.media.audiofx.LoudnessEnhancer
+import android.os.Build
+import com.xgimiru.player.settings.FrameRateHook
+import com.xgimiru.player.settings.K
+import com.xgimiru.player.settings.Passthrough
+import com.xgimiru.player.settings.Settings
 import com.xgimiru.player.dovi.DoviRenderer
 import com.xgimiru.player.dovi.DoviStore
 import com.xgimiru.player.dovi.HdrPolicy
@@ -44,7 +63,8 @@ import java.util.Locale
  * (c2.mtk.dvhe.*), и точная синхронизация кадров для 4K HDR.
  */
 @OptIn(UnstableApi::class)
-class ExoEngine(private val ctx: Context, private val host: FrameLayout, private val listener: Engine.Listener) : Engine {
+class ExoEngine(private val ctx: Context, private val host: FrameLayout, private val listener: Engine.Listener,
+                private val cfg: Settings) : Engine {
 
     /** Dolby Vision профиля 5: метаданные из файла и свой GL-рендер (см. [DoviRenderer]). */
     private val dovi = DoviStore()
@@ -54,27 +74,39 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
     /** Вывод DV5: true — HDR10 (слой помечен BT.2020 PQ), false — свой тон-маппинг в SDR. */
     private lateinit var trackSelector: DefaultTrackSelector
     // Туннель выключен по умолчанию: в туннеле звук идёт в аудиотракт MediaTek мимо микшера Android,
-    // и громкость системы к нему не применяется (кнопки громкости «не работали»). С ним же второе видео
-    // подряд падало в MediaCodecVideoRenderer.onEnabled. Включается только вручную (pref "tunneling").
-    private val tunneling = ctx.getSharedPreferences("player", Context.MODE_PRIVATE).getBoolean("tunneling", false)
+    // и громкость системы к нему не применяется. Включается в настройках (Видео > Туннельный режим).
+    private val tunneling = cfg.bool(K.TUNNELING)
 
-    var doviHdr = ctx.getSharedPreferences("player", Context.MODE_PRIVATE).getBoolean("doviHdr", false)
-        set(v) {
-            field = v
-            ctx.getSharedPreferences("player", Context.MODE_PRIVATE).edit().putBoolean("doviHdr", v).apply()
-        }
+    var doviHdr: Boolean
+        get() = cfg.string(K.DV5) == "true"
+        set(v) = cfg.set(K.DV5, v.toString())
+
+    /** Задержка звука: сдвиг часов звука, по которым Media3 выводит кадры (в туннеле не действует). */
+    @Volatile private var audioDelayUs = cfg.int(K.AUDIO_DELAY) * 1000L
+    /** Задержка субтитров вперёд (позже). Раньше умеют только внешние файлы: их сдвигает сам экран плеера. */
+    private var subDelayUs = cfg.int(K.SUB_DELAY).coerceAtLeast(0) * 1000L
+    private var aspect = cfg.string(K.ASPECT)
+    private var loudness: LoudnessEnhancer? = null
+    private var dynamics: DynamicsProcessing? = null
 
     private val view = PlayerView(ctx).apply {
         useController = false
         setShutterBackgroundColor(Color.BLACK)
         setKeepContentOnPlayerReset(true)
-        subtitleView?.apply {
-            setStyle(CaptionStyleCompat(Color.WHITE, Color.TRANSPARENT, Color.TRANSPARENT,
-                CaptionStyleCompat.EDGE_TYPE_OUTLINE, Color.argb(230, 0, 0, 0),
-                Typeface.create("sans-serif-medium", Typeface.BOLD)))
-            setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * 1.15f)
-            setBottomPaddingFraction(0.06f)
-            setApplyEmbeddedFontSizes(false)
+        // свои субтитры поверх (ниже): так их можно задержать; у PlayerView свои скрыты
+        subtitleView?.visibility = View.GONE
+    }
+
+    /** Субтитры: стиль из настроек, задержка через очередь [pending]. */
+    private val subView = SubtitleView(ctx).also { styleSubtitles(it) }
+    private val pending = ArrayDeque<CueGroup>()
+    private val pump = object : Runnable {
+        override fun run() {
+            val now = player.currentPosition * 1000
+            var shown: CueGroup? = null
+            while (pending.isNotEmpty() && pending.first().presentationTimeUs + subDelayUs <= now) shown = pending.removeFirst()
+            shown?.let { subView.setCues(it.cues) }
+            if (pending.isNotEmpty()) main.postDelayed(this, 40)
         }
     }
 
@@ -87,39 +119,34 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
     private val http = DefaultHttpDataSource.Factory()
         .setAllowCrossProtocolRedirects(true)
         .setConnectTimeoutMs(30_000)
-        .setReadTimeoutMs(60_000)          // TorrServe может долго искать пиров
+        .setReadTimeoutMs(60_000)
         .setUserAgent(StreamRequest.DEFAULT_USER_AGENT)
     private var mimeHint: String? = null
 
     init {
-        val renderers = DefaultRenderersFactory(ctx)
-            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON) // FFmpeg — если чип не умеет звук
-            .setEnableDecoderFallback(true)
+        val renderers = Renderers()
         val load = DefaultLoadControl.Builder()
             .setBufferDurationsMs(20_000, 50_000, 2_000, 5_000)
             .setTargetBufferBytes(96 * 1024 * 1024)
             .setPrioritizeTimeOverSizeThresholds(false)
             .build()
-        val selector = DefaultTrackSelector(ctx).apply {
-            setParameters(buildUponParameters()
-                .setPreferredAudioLanguages("ru", "rus")
-                .setSelectUndeterminedTextLanguage(false)
-                // Туннель: кадры выводит и сверяет со звуком само «железо» видеоплоскости —
-                // так играют Netflix/YouTube на ТВ. Если связка не умеет, Media3 выключит сам.
-                .setTunnelingEnabled(tunneling))
-        }
+        val selector = DefaultTrackSelector(ctx).apply { setParameters(trackParams(buildUponParameters())) }
         trackSelector = selector
         player = ExoPlayer.Builder(ctx, renderers)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(ctx, http), RpuTapExtractorsFactory(dovi) {
+            .setMediaSourceFactory(DefaultMediaSourceFactory(RoutingDataSource.Factory(DefaultDataSource.Factory(ctx, http)), RpuTapExtractorsFactory(dovi) {
                 HdrPolicy.caps(ctx) to HdrPolicy.prefs(ctx)
             }))
             .setLoadControl(load)
             .setTrackSelector(selector)
             .setHandleAudioBecomingNoisy(true)
             .build()
-        player.setVideoChangeFrameRateStrategy(C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS)
+        // смена частоты кадров экрана под фильм в базовом плеере выключена (см. FrameRateHook)
+        player.setVideoChangeFrameRateStrategy(
+            if (FrameRateHook.active()) C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS else C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF)
         view.player = player
         host.addView(view, FrameLayout.LayoutParams(-1, -1))
+        host.addView(subView, FrameLayout.LayoutParams(-1, -1))
+        applyEffects()
         dovi.onActivated = {
             // DV5 рисует наш шейдер — кадры нужны приложению, туннель тут невозможен.
             trackSelector.setParameters(trackSelector.buildUponParameters().setTunnelingEnabled(false))
@@ -142,7 +169,19 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
                 }
             }
             override fun onVideoSizeChanged(videoSize: VideoSize) {
-                doviRenderer?.setVideoSize(videoSize.width, videoSize.height, videoSize.pixelWidthHeightRatio)
+                doviRenderer?.setVideoSize(videoSize.width, videoSize.height, forcedPar(videoSize))
+                applyAspect()
+            }
+            override fun onRenderedFirstFrame() = applyAspect()
+            override fun onAudioSessionIdChanged(audioSessionId: Int) = applyEffects()
+            override fun onCues(cueGroup: CueGroup) {
+                if (subDelayUs <= 0) { pending.clear(); subView.setCues(cueGroup.cues); return }
+                pending.addLast(cueGroup)
+                main.removeCallbacks(pump)
+                main.post(pump)
+            }
+            override fun onPositionDiscontinuity(old: Player.PositionInfo, new: Player.PositionInfo, reason: Int) {
+                if (reason == Player.DISCONTINUITY_REASON_SEEK) { pending.clear(); subView.setCues(emptyList()) }
             }
             override fun onTracksChanged(tracks: Tracks) {
                 // Dolby Vision профиля 5 без HDR10-основы: в прошивке XGIMI декодер DV выключен —
@@ -155,12 +194,20 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
                 } && tracks.groups.none { g -> g.type == C.TRACK_TYPE_VIDEO && g.isSupported }
                 if (dvOnly) {
                     player.stop()
-                    listener.onError(DV5_MESSAGE, false)
+                    listener.onError(DV5_MESSAGE, EngineRules.Problem.OTHER)
+                    return
+                }
+                // no decoder for the picture or for any sound track: Media3 would play black or silent
+                val has = { t: Int -> tracks.groups.any { it.type == t } }
+                if (tracks.groups.isNotEmpty() && EngineRules.tracksUnsupported(has(C.TRACK_TYPE_VIDEO), tracks.isTypeSupported(C.TRACK_TYPE_VIDEO, true),
+                        has(C.TRACK_TYPE_AUDIO), tracks.isTypeSupported(C.TRACK_TYPE_AUDIO, true))) {
+                    player.stop()
+                    listener.onError("Формат не поддерживается.", EngineRules.Problem.FORMAT)
                     return
                 }
                 listener.onTracksChanged()
             }
-            override fun onPlayerError(e: PlaybackException) = listener.onError(describe(e), isFormatProblem(e))
+            override fun onPlayerError(e: PlaybackException) = listener.onError(describe(e), EngineRules.problem(e.errorCode))
         })
     }
 
@@ -185,9 +232,12 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
             // ручной выбор качества прошлого фильма к новому не относится
             player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
                 .clearOverridesOfType(C.TRACK_TYPE_VIDEO).build()
-            trackSelector.setParameters(trackSelector.buildUponParameters().setTunnelingEnabled(tunneling))
-            val subConfigs = subs.map {
-                MediaItem.SubtitleConfiguration.Builder(it).setMimeType(subtitleMime(it)).setLanguage(subtitleLanguage(it)).build()
+            trackSelector.setParameters(trackParams(trackSelector.buildUponParameters()))
+            pending.clear(); subView.setCues(emptyList())
+            // первый внешний файл (лучший по языку) отмечен «по умолчанию»: в режиме «Как отмечено в файле» он и включится
+            val subConfigs = subs.mapIndexed { i, u ->
+                MediaItem.SubtitleConfiguration.Builder(u).setMimeType(subtitleMime(u)).setLanguage(subtitleLanguage(u))
+                    .setSelectionFlags(if (i == 0) C.SELECTION_FLAG_DEFAULT else 0).build()
             }
             val item = MediaItem.Builder().setUri(uri).setSubtitleConfigurations(subConfigs)
             StreamRequest.streamMime(mimeHint, uri.path, uri.query)?.let { item.setMimeType(it) }
@@ -206,7 +256,27 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
     private fun failOpen(e: Throwable) {
         android.util.Log.w("ExoEngine", "open failed", e)
         runCatching { player.stop() }
-        main.post { listener.onError("Этот поток не открывается (${e.javaClass.simpleName}).", true) }
+        main.post { listener.onError("Этот поток не открывается (${e.javaClass.simpleName}).", EngineRules.Problem.FORMAT) }
+    }
+
+    override fun badges(): List<String> {
+        var w = 0; var h = 0; var hdr: String? = null; var dv = dovi.active; var atmos = false
+        for (g in player.currentTracks.groups) for (i in 0 until g.length) if (g.isTrackSelected(i)) {
+            val f = g.getTrackFormat(i)
+            when (g.type) {
+                C.TRACK_TYPE_VIDEO -> {
+                    w = f.width; h = f.height
+                    if (f.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION || f.codecs?.startsWith("dv") == true) dv = true
+                    when (f.colorInfo?.colorTransfer) { C.COLOR_TRANSFER_ST2084 -> hdr = "HDR10"; C.COLOR_TRANSFER_HLG -> hdr = "HLG" }
+                }
+                C.TRACK_TYPE_AUDIO -> if (f.sampleMimeType == MimeTypes.AUDIO_E_AC3_JOC) atmos = true
+            }
+        }
+        return Badges.card(MediaFacts(width = w, height = h, hdr = hdr, dolbyVision = dv, atmos = atmos))
+    }
+
+    override fun liftSubtitles(px: Int) {
+        subView.animate().translationY(-px.toFloat()).setDuration(220).start()
     }
 
     override fun play() = player.play()
@@ -288,6 +358,30 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
     override fun audioInfo() = selected(C.TRACK_TYPE_AUDIO)?.let { audioLabel(it) }
     override fun textInfo() = selected(C.TRACK_TYPE_TEXT)?.let { Formats.language(it.language) ?: it.label ?: "вкл" }
 
+    override fun setAudioDelay(ms: Int) { audioDelayUs = ms * 1000L }
+
+    override fun setSubtitleDelay(ms: Int) {
+        subDelayUs = ms.coerceAtLeast(0) * 1000L
+        pending.clear()
+    }
+
+    override fun setAspect(value: String) {
+        aspect = value
+        applyAspect()
+        player.videoSize.let { doviRenderer?.setVideoSize(it.width, it.height, forcedPar(it)) }
+    }
+
+    /** Пропорции из настроек вместо пропорций файла: рамка PlayerView получает своё соотношение. */
+    private fun applyAspect() {
+        val ratio = Settings.aspectOf(aspect) ?: return
+        main.post { view.findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame)?.setAspectRatio(ratio) }
+    }
+
+    private fun forcedPar(v: VideoSize): Float {
+        val ratio = Settings.aspectOf(aspect) ?: return v.pixelWidthHeightRatio
+        return if (v.width > 0 && v.height > 0) ratio / (v.width.toFloat() / v.height) else v.pixelWidthHeightRatio
+    }
+
     override fun setScale(mode: Int) {
         currentScale = mode
         doviRenderer?.scaleMode = mode
@@ -299,11 +393,15 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
     }
 
     override fun release() {
+        main.removeCallbacks(pump)
+        runCatching { loudness?.release() }
+        runCatching { dynamics?.release() }
         doviRenderer?.let { player.clearVideoFrameMetadataListener(it) }
         player.release()
         doviRenderer?.release()
         doviView?.let { host.removeView(it) }
         host.removeView(view)
+        host.removeView(subView)
     }
 
     /**
@@ -357,10 +455,114 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
     fun doviStats() = doviRenderer?.stats()
     private var currentScale = 0
 
+    // ── Настройки ────────────────────────────────────────────────────────────
+    /** Декодеры, звук на ресивер, сведение в стерео и задержка звука. */
+    private inner class Renderers : DefaultRenderersFactory(ctx) {
+        init {
+            setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON) // FFmpeg, если чип не умеет звук
+            val mode = cfg.string(K.DECODER)
+            setEnableDecoderFallback(mode != "hw")
+            setMediaCodecSelector(codecSelector(mode))
+        }
+
+        override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean): AudioSink {
+            val b = DefaultAudioSink.Builder(context)
+                .setEnableFloatOutput(enableFloatOutput)
+                .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+            if (cfg.bool(K.DOWNMIX)) b.setAudioProcessors(arrayOf(stereoMixer()))
+            return Sink(b.build())
+        }
+    }
+
+    /** Форматы, выключенные в «Передавать звук на ресивер», декодируются в PCM. Часы звука сдвинуты на задержку. */
+    private inner class Sink(sink: AudioSink) : ForwardingAudioSink(sink) {
+        override fun supportsFormat(format: Format) = getFormatSupport(format) != AudioSink.SINK_FORMAT_UNSUPPORTED
+        override fun getFormatSupport(format: Format): Int =
+            if (!Passthrough.allowed(format.sampleMimeType, cfg)) AudioSink.SINK_FORMAT_UNSUPPORTED else super.getFormatSupport(format)
+        override fun getCurrentPositionUs(sourceEnded: Boolean): Long {
+            val p = super.getCurrentPositionUs(sourceEnded)
+            return if (p == AudioSink.CURRENT_POSITION_NOT_SET) p else (p + audioDelayUs).coerceAtLeast(0)
+        }
+    }
+
+    private fun codecSelector(mode: String) = MediaCodecSelector { mime, secure, tunnel ->
+        val all = MediaCodecUtil.getDecoderInfos(mime, secure, tunnel)
+        if (!MimeTypes.isVideo(mime)) all
+        else when (mode) {
+            "hw" -> all.filter { !it.softwareOnly }
+            "sw" -> all.sortedBy { if (it.softwareOnly) 0 else 1 }
+            else -> all
+        }
+    }
+
+    /** Любое число каналов в два: готовые матрицы Media3, для 7 и 8 каналов своя. */
+    private fun stereoMixer() = ChannelMixingAudioProcessor().apply {
+        for (n in 1..8) {
+            val m = runCatching { ChannelMixingMatrix.create(n, 2) }.getOrNull() ?: fallbackMatrix(n)
+            putChannelMixingMatrix(m)
+        }
+    }
+
+    private fun fallbackMatrix(n: Int): ChannelMixingMatrix {
+        // порядок Android: FL FR FC LFE затем тыл и бока парами; LFE не сводим
+        val c = FloatArray(n * 2)
+        for (i in 0 until n) {
+            val (l, r) = when (i) { 0 -> 1f to 0f; 1 -> 0f to 1f; 2 -> 0.707f to 0.707f; 3 -> 0f to 0f
+                else -> if (i % 2 == 0) 0.707f to 0f else 0f to 0.707f }
+            c[i * 2] = l; c[i * 2 + 1] = r
+        }
+        val norm = maxOf((0 until n).sumOf { c[it * 2].toDouble() }, 1.0).toFloat()
+        for (i in c.indices) c[i] /= norm
+        return ChannelMixingMatrix(n, 2, c)
+    }
+
+    private fun trackParams(b: DefaultTrackSelector.Parameters.Builder): DefaultTrackSelector.Parameters.Builder {
+        val sys = Locale.getDefault().language
+        when (val a = cfg.string(K.AUDIO_LANG)) {
+            "original" -> b.setPreferredAudioLanguages()
+            "system" -> b.setPreferredAudioLanguages(sys)
+            else -> b.setPreferredAudioLanguages(a)
+        }
+        b.setSelectUndeterminedTextLanguage(false).setIgnoredTextSelectionFlags(0).setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+        when (val t = cfg.string(K.SUB_LANG)) {
+            "file" -> b.setPreferredTextLanguages()
+            "forced" -> b.setPreferredTextLanguages().setIgnoredTextSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+            "off" -> b.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+            else -> b.setPreferredTextLanguages(*listOfNotNull(if (t == "system") sys else t,
+                cfg.string(K.SUB_LANG2).takeIf { it != "none" }).toTypedArray())
+        }
+        return b.setTunnelingEnabled(tunneling)
+    }
+
+    private fun styleSubtitles(v: SubtitleView) = SubStyle.apply(v, cfg)
+
+    /** Усиление громкости и ночной режим: эффекты Android на сессии звука плеера (не для звука на ресивер). */
+    private fun applyEffects() {
+        runCatching { loudness?.release() }; loudness = null
+        runCatching { dynamics?.release() }; dynamics = null
+        val sid = player.audioSessionId
+        if (sid == C.AUDIO_SESSION_ID_UNSET) return
+        if (cfg.boostDb > 0) loudness = runCatching {
+            LoudnessEnhancer(sid).apply { setTargetGain(cfg.boostDb * 100); setEnabled(true) }
+        }.onFailure { android.util.Log.w("ExoEngine", "boost", it) }.getOrNull()
+        if (cfg.bool(K.NIGHT) && Build.VERSION.SDK_INT >= 28) dynamics = runCatching { night(sid) }
+            .onFailure { android.util.Log.w("ExoEngine", "night", it) }.getOrNull()
+    }
+
+    @androidx.annotation.RequiresApi(28)
+    private fun night(sid: Int): DynamicsProcessing {
+        val c = DynamicsProcessing.Config.Builder(DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION, 2,
+            false, 0, true, 1, false, 0, true).build()
+        // громкие места сжимаются 4:1 выше -30 дБ, тихие поднимаются на 6 дБ, сверху ограничитель
+        c.setMbcBandAllChannelsTo(0, DynamicsProcessing.MbcBand(true, 20000f, 10f, 250f, 4f, -30f, 6f, -90f, 1f, 0f, 6f))
+        c.setLimiterAllChannelsTo(DynamicsProcessing.Limiter(true, true, 0, 1f, 60f, 10f, -3f, 0f))
+        return DynamicsProcessing(0, sid, c).apply { setEnabled(true) }
+    }
+
     companion object {
         const val DV5_MESSAGE = "Это Dolby Vision «профиль 5». В прошивке проектора декодер Dolby Vision выключен, " +
             "поэтому картинку такого файла не покажет ни один плеер.\n\n" +
-            "Выберите в Лампе другую раздачу этого фильма: HDR10, HDR, SDR или «HDR.DV» — они идут нормально."
+            "Нужен другой файл этого фильма: HDR10, HDR, SDR или «HDR.DV», они идут нормально."
     }
 
     // ── Подписи ──────────────────────────────────────────────────────────────
@@ -419,22 +621,10 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
     }
 
     /** Ошибки формата/декодера — повод перейти на VLC; сетевые — нет. */
-    private fun isFormatProblem(e: PlaybackException) = e.errorCode in listOf(
-        PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
-        PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED,
-        PlaybackException.ERROR_CODE_DECODING_FAILED,
-        PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
-        PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
-        PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
-        PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
-        PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED,
-        PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED,
-    )
-
     private fun describe(e: PlaybackException): String = when (e.errorCode) {
         PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
         PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ->
-            "Источник не отвечает. Если это торрент — проверьте, что TorrServe запущен и у раздачи есть сиды."
+            "Источник не отвечает. Проверьте сеть и что папка или сервер доступны."
         PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS -> "Сервер отказал в доступе к видео."
         PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED,
         PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED -> "Список потока (HLS/DASH) не читается."

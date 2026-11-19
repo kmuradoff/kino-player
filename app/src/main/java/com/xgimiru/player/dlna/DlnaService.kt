@@ -101,7 +101,7 @@ class DlnaService : Service() {
             nm.createNotificationChannel(NotificationChannel(CHANNEL,
                 tr("Трансляция с телефона", "Casting from a phone"), NotificationManager.IMPORTANCE_MIN))
         }
-        val open = PendingIntent.getActivity(this, 1, Intent(this, SettingsActivity::class.java),
+        val open = PendingIntent.getActivity(this, 1, Intent(this, SettingsActivity::class.java).putExtra("section", "casting"),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val n = Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_menu_share)

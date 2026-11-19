@@ -6,14 +6,17 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
-    <!-- встроенный торрент-движок (TorrService) и его запуск при включении в режиме для Лампы -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- DLNA-рендерер (dlna/DlnaService): поиск SSDP по Wi-Fi, смена сети, открытие плеера из фона -->
+    <!-- субтитры .srt/.ass рядом с видео на флешке: без него Android показывает приложению только сами видео -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <!-- папки в сети: поиск серверов SMB, DLNA и mDNS в локальной сети (libVLC), DLNA-рендерер (dlna/DlnaService): поиск SSDP по Wi-Fi, смена сети -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- встроенный TorrServer (TorrService) и его запуск при включении в режиме для Лампы, приёмник видео (DlnaService) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- видео с телефона или из браузера открывается, даже когда Lumen Play в фоне -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- «Продолжить просмотр» лаунчера: свои строки WatchNextPrograms -->
     <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />
@@ -40,7 +43,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Сам плеер: его выбирают Лампа, TorrServe и любые приложения с видео -->
+        <!-- Сам плеер: его выбирают файловые менеджеры и любые приложения с видео -->
         <activity
             android:name=".PlayerActivity"
             android:exported="true"
@@ -55,6 +58,8 @@
                 <data android:scheme="https" />
                 <data android:scheme="file" />
                 <data android:scheme="content" />
+                <data android:scheme="smb" />
+                <data android:scheme="nfs" />
                 <data android:mimeType="video/*" />
             </intent-filter>
             <intent-filter>
@@ -71,11 +76,9 @@
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
         </activity>
-        <!-- страница фильма с раздачами и источники поиска торрентов -->
-        <activity android:name=".torrents.FilmActivity" android:exported="false" />
-        <activity android:name=".torrents.SourcesActivity" android:exported="false"
-            android:windowSoftInputMode="adjustPan" />
-        <!-- magnet-ссылки и .torrent-файлы: встроенный движок или внешний TorrServe -->
+        <activity android:name=".SettingsActivity" android:exported="false" />
+
+        <!-- magnet links and .torrent files: the list of videos, playback through the built-in TorrServer -->
         <activity
             android:name=".TorrentActivity"
             android:exported="true"
@@ -96,7 +99,7 @@
                 <data android:scheme="content" />
                 <data android:mimeType="application/x-bittorrent" />
             </intent-filter>
-            <!-- файлы .torrent, у которых нет своего MIME-типа -->
+            <!-- .torrent files that come without their MIME type -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -109,11 +112,7 @@
             </intent-filter>
         </activity>
 
-        <activity android:name=".SettingsActivity" android:exported="false" />
-        <activity android:name=".tv.LiveActivity" android:exported="false" android:launchMode="singleTask"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation|smallestScreenSize|uiMode"
-            android:theme="@style/Kino.Player" />
-
+        <!-- встроенный TorrServer: работает, пока смотрите торрент или всё время в режиме для Лампы (127.0.0.1:8090) -->
         <service
             android:name=".TorrService"
             android:exported="false"
@@ -124,7 +123,7 @@
             </intent-filter>
         </receiver>
 
-        <!-- DLNA: телефоны и компьютеры видят Lumen Play как телевизор -->
+        <!-- DLNA: телефоны и компьютеры видят Lumen Play как телевизор, плюс приёмник «Отправить на Lumen Play» из браузера -->
         <service
             android:name=".dlna.DlnaService"
             android:exported="false"

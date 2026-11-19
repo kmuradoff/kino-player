@@ -7,7 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.LruCache
 import android.widget.ImageView
-import com.xgimiru.player.tv.Net
+import com.xgimiru.player.net.Net
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.Executors
@@ -47,7 +47,12 @@ object Img {
     }
 
     private fun fetch(ctx: Context, url: String, maxPx: Int): Bitmap? {
-        val f = diskFile(ctx, url)
+        // pictures next to the videos: read in place (USB) or through the SMB reader (NAS), never over HTTP
+        val f = if (url.startsWith("file:")) File(android.net.Uri.parse(url).path ?: return null) else diskFile(ctx, url)
+        if (url.startsWith("smb:") && (!f.exists() || f.length() == 0L)) {
+            val bytes = com.xgimiru.player.net.Smb.readAll(com.xgimiru.player.net.NetShares.authorize(ctx, android.net.Uri.parse(url)).toString(), 12 shl 20) ?: return null
+            File(f.path + ".part").apply { writeBytes(bytes); renameTo(f) }
+        }
         if (!f.exists() || f.length() == 0L) {
             val tmp = File(f.path + ".part")
             if (url.startsWith("content:")) ctx.contentResolver.openInputStream(android.net.Uri.parse(url))!!.use { i -> tmp.outputStream().use { i.copyTo(it) } }

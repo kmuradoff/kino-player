@@ -4,8 +4,6 @@ import android.content.Context
 import android.net.Uri
 import org.json.JSONArray
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 
 /** Где остановились: по одной записи на видео, новые сверху. */
 object History {
@@ -18,11 +16,12 @@ object History {
 
     private const val PREFS = "history"
     private const val KEY = "items"
+    private const val WATCHED = "watched"
     private const val LIMIT = 40
 
     /**
-     * Ключ видео. У ссылок TorrServe меняется только «мусор» (play, stat…),
-     * а hash торрента и номер файла постоянны — по ним и узнаём фильм.
+     * Ключ видео: ссылка без параметров. Ссылки с link= и index= (потоковые серверы других приложений)
+     * узнаются по hash и номеру файла, так старая история остаётся действительной.
      */
     fun key(uri: Uri): String {
         val link = uri.getQueryParameter("link")
@@ -32,13 +31,7 @@ object History {
     }
 
     fun all(ctx: Context): List<Entry> {
-        val raw = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, "[]")
-        val arr = runCatching { JSONArray(raw) }.getOrDefault(JSONArray())
-        return (0 until arr.length()).map { i ->
-            val o = arr.getJSONObject(i)
-            Entry(o.getString("k"), o.getString("u"), o.optString("t"), o.optLong("p"), o.optLong("d"), o.optLong("w"),
-                o.optString("l").ifEmpty { null })
-        }
+        return read(ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, "[]"))
     }
 
     fun get(ctx: Context, key: String) = all(ctx).firstOrNull { it.key == key }
@@ -51,6 +44,38 @@ object History {
     fun remove(ctx: Context, key: String) {
         write(ctx, all(ctx).filter { it.key != key })
         WatchNext.remove(ctx, key)
+    }
+
+    /** Films and episodes watched to the end: "Недавно смотрели" and the check mark in the folder list. */
+    fun markWatched(ctx: Context, e: Entry) {
+        val done = e.copy(position = e.duration, playlist = null)
+        writeWatched(ctx, (listOf(done) + watched(ctx).filter { it.key != e.key }).take(LIMIT))
+    }
+
+    fun watched(ctx: Context): List<Entry> = read(ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(WATCHED, "[]"))
+
+    /** Started and watched, newest first, one entry per video. */
+    fun recent(ctx: Context): List<Entry> = (all(ctx) + watched(ctx)).sortedByDescending { it.updated }.distinctBy { it.key }
+
+    /** Long OK in a folder: from the start, and gone from Continue and from the watched list. */
+    fun forget(ctx: Context, key: String) {
+        remove(ctx, key)
+        writeWatched(ctx, watched(ctx).filter { it.key != key })
+    }
+
+    private fun writeWatched(ctx: Context, list: List<Entry>) {
+        val arr = JSONArray()
+        for (x in list) arr.put(JSONObject().put("k", x.key).put("u", x.uri).put("t", x.title).put("p", x.position).put("d", x.duration).put("w", x.updated))
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(WATCHED, arr.toString()).apply()
+    }
+
+    private fun read(raw: String?): List<Entry> {
+        val arr = runCatching { JSONArray(raw ?: "[]") }.getOrDefault(JSONArray())
+        return (0 until arr.length()).map { i ->
+            val o = arr.getJSONObject(i)
+            Entry(o.getString("k"), o.getString("u"), o.optString("t"), o.optLong("p"), o.optLong("d"), o.optLong("w"),
+                o.optString("l").ifEmpty { null })
+        }
     }
 
     private fun write(ctx: Context, list: List<Entry>) {
@@ -106,37 +131,4 @@ object Playlists {
         val gone = p.all.keys.filter { it !in keep }
         if (gone.isNotEmpty()) p.edit().apply { gone.forEach { remove(it) } }.apply()
     }
-}
-
-/** Скорость и пиры торрента — показываем, пока идёт загрузка. */
-object TorrServe {
-    /** [fileBytes] — размер играющего файла (по index ссылки), 0 — неизвестен. */
-    data class Stat(val speedMbit: Double, val peers: Int, val seeders: Int, val complete: Boolean, val fileBytes: Long = 0)
-
-    /** Ссылка TorrServe: /stream и link= с magnet, btih или hash торрента (40 hex), а не любая ссылка с «link». */
-    fun isTorrServe(uri: Uri): Boolean {
-        val link = uri.getQueryParameter("link") ?: return false
-        if (uri.path?.contains("/stream") != true) return false
-        return link.startsWith("magnet:", true) || link.contains("btih:", true) || Regex("^[0-9a-fA-F]{40}$").matches(link)
-    }
-
-    /** Блокирующий запрос — вызывать не из главного потока. */
-    fun stat(uri: Uri): Stat? = runCatching {
-        val hash = uri.getQueryParameter("link")?.substringAfter("btih:")?.take(40) ?: return null
-        val base = "${uri.scheme}://${uri.authority}"
-        val c = URL("$base/torrents").openConnection() as HttpURLConnection
-        c.connectTimeout = 1500; c.readTimeout = 1500
-        c.requestMethod = "POST"; c.doOutput = true
-        c.setRequestProperty("Content-Type", "application/json")
-        c.outputStream.use { it.write("""{"action":"get","hash":"$hash"}""".toByteArray()) }
-        val o = JSONObject(c.inputStream.bufferedReader().use { it.readText() })
-        c.disconnect()
-        val loaded = o.optLong("loaded_size"); val size = o.optLong("torrent_size")
-        val index = uri.getQueryParameter("index")?.toIntOrNull()
-        val files = o.optJSONArray("file_stats")
-        val fileBytes = if (index == null || files == null) 0L
-            else (0 until files.length()).map { files.getJSONObject(it) }.firstOrNull { it.optInt("id") == index }?.optLong("length") ?: 0L
-        Stat(o.optDouble("download_speed", 0.0) * 8 / 1e6, o.optInt("active_peers"), o.optInt("connected_seeders"),
-            complete = size > 0 && loaded >= size * 0.99, fileBytes = fileBytes)
-    }.getOrNull()
 }

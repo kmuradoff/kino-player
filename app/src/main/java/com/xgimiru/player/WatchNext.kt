@@ -190,7 +190,11 @@ object Name {
     private val JUNK = Regex("(?i)\\b(2160p|1080p|1080i|720p|480p|4k|uhd|bdrip|bd-?remux|remux|blu-?ray|web-?dl|web-?rip|hdrip|dvdrip|hdtv|x264|x265|h\\s?26[45]|hevc|avc|hdr10?|dv|sdr|ddp?5\\s?1|aac|ac3|dts|ma|amzn|nf|okko|rus|eng)\\b")
 
     fun parse(raw: String): Parsed {
-        val s = raw.replace('.', ' ').replace('_', ' ').replace(Regex("\\s+"), " ").trim()
+        // "Дюна. Часть вторая (2024)" is a title and its second part: keep it as "Дюна: Часть вторая".
+        // Dotted release names ("Interstellar.2014.UHD") have no spaces, their dots are spaces.
+        val spaced = ' ' in raw
+        val s = (if (spaced) raw.replace(Regex("(\\p{L}{3,})\\. (?=\\p{Lu})"), "$1: ") else raw.replace('.', ' '))
+            .replace('_', ' ').replace(Regex("\\s+"), " ").trim()
         var cut = s.length
         var season: String? = null; var episode: String? = null; var year: String? = null
         SE.find(s)?.let { season = it.groupValues[1].trimStart('0').ifEmpty { "0" }; episode = it.groupValues[2].trimStart('0').ifEmpty { "0" }; cut = minOf(cut, it.range.first) }

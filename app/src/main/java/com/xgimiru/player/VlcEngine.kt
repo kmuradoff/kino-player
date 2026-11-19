@@ -3,42 +3,93 @@ package com.xgimiru.player
 import android.content.Context
 import android.net.Uri
 import android.widget.FrameLayout
+import com.xgimiru.player.settings.K
+import com.xgimiru.player.settings.Settings
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
 import org.videolan.libvlc.interfaces.IMedia
 import org.videolan.libvlc.util.VLCVideoLayout
 import java.util.Locale
+import kotlin.math.pow
 
-/** Движок libVLC: играет всё, включая AVI/XviD. Картинка — на SurfaceView, без OpenGL. */
-class VlcEngine(ctx: Context, private val host: FrameLayout, private val listener: Engine.Listener) : Engine {
+/** Движок libVLC: играет всё, включая AVI/XviD и сетевые папки. Картинка — на SurfaceView, без OpenGL. */
+class VlcEngine(ctx: Context, private val host: FrameLayout, private val listener: Engine.Listener,
+                private val cfg: Settings) : Engine {
 
-    private val vlc = LibVLC(ctx, arrayListOf(
-        "--audio-time-stretch",              // скорость ×1.5 без «бурундуков»
-        "--freetype-rel-fontsize=14",        // субтитры крупнее обычного
-        "--freetype-bold",
-        "--freetype-outline-thickness=4",
-        "--freetype-color=16777215",
-        "--sub-margin=40",
-        "--no-stats",
-    ))
+    // Незнакомый ключ ломает запуск libVLC: тогда запасной набор, с которым играла 1.3.
+    private val vlc = runCatching { LibVLC(ctx, options()) }.getOrElse {
+        android.util.Log.w("VlcEngine", "options refused, minimal set", it)
+        LibVLC(ctx, arrayListOf("--audio-time-stretch", "--no-stats"))
+    }
     private val player = MediaPlayer(vlc)
     private val layout = VLCVideoLayout(ctx)
     private var length = 0L
+    private var audioDelayMs = cfg.int(K.AUDIO_DELAY)
+    private var subDelayMs = cfg.int(K.SUB_DELAY)
+    private var subCharset: String? = null
+    private var started = false
 
     init {
         host.addView(layout, FrameLayout.LayoutParams(-1, -1))
         player.attachViews(layout, null, true, false)
         player.setEventListener { e ->
             when (e.type) {
-                MediaPlayer.Event.Playing, MediaPlayer.Event.Paused -> listener.onStateChanged()
+                MediaPlayer.Event.Playing -> { onFirstPlay(); listener.onStateChanged() }
+                MediaPlayer.Event.Paused -> listener.onStateChanged()
                 MediaPlayer.Event.Buffering -> listener.onBuffering(e.buffering < 100f, e.buffering.toInt())
                 MediaPlayer.Event.LengthChanged -> length = e.lengthChanged
                 MediaPlayer.Event.ESAdded, MediaPlayer.Event.ESSelected -> listener.onTracksChanged()
                 MediaPlayer.Event.EndReached -> listener.onEnded()
-                MediaPlayer.Event.EncounteredError -> listener.onError("Источник недоступен или формат не поддерживается.", false)
+                MediaPlayer.Event.EncounteredError -> listener.onError("Источник недоступен или формат не поддерживается.", EngineRules.Problem.OTHER)
             }
         }
+    }
+
+    /** Настройки, которые libVLC берёт только при создании. */
+    private fun options(): ArrayList<String> {
+        val o = arrayListOf("--audio-time-stretch", "--no-stats")
+        // субтитры
+        o += "--freetype-rel-fontsize=" + when (cfg.subSize) { in 0..75 -> 20; in 76..90 -> 18; in 91..105 -> 16; in 106..125 -> 14; in 126..145 -> 12; else -> 10 }
+        if (cfg.bool(K.SUB_BOLD)) o += "--freetype-bold"
+        o += "--freetype-color=" + when (cfg.string(K.SUB_COLOR)) {
+            "yellow" -> 0xFFE14D; "grey" -> 0xD2D2D2; "cyan" -> 0x7FE3FF; "green" -> 0x8DEB8D; else -> 0xFFFFFF
+        }
+        when (cfg.string(K.SUB_EDGE)) {
+            "none" -> o += "--freetype-outline-thickness=0"
+            "shadow" -> { o += "--freetype-outline-thickness=0"; o += "--freetype-shadow-opacity=200" }
+            "raised" -> { o += "--freetype-outline-thickness=2"; o += "--freetype-shadow-opacity=160" }
+            else -> o += "--freetype-outline-thickness=4"
+        }
+        when (cfg.string(K.SUB_BACK)) {
+            "half" -> { o += "--freetype-background-opacity=150"; o += "--freetype-background-color=0" }
+            "solid" -> { o += "--freetype-background-opacity=255"; o += "--freetype-background-color=0" }
+        }
+        o += "--sub-margin=" + cfg.subPosition * 7
+        if (!cfg.bool(K.SUB_AUTO)) o += "--no-sub-autodetect-file"
+        cfg.string(K.SUB_ENCODING).takeIf { it != "auto" }?.let { o += "--subsdec-encoding=$it" }
+        val sys = Locale.getDefault().language
+        when (val a = cfg.string(K.AUDIO_LANG)) { "original" -> Unit; "system" -> o += "--audio-language=$sys"; else -> o += "--audio-language=$a" }
+        when (val t = cfg.string(K.SUB_LANG)) {
+            "file", "forced", "off" -> Unit
+            else -> o += "--sub-language=" + listOfNotNull(if (t == "system") sys else t, cfg.string(K.SUB_LANG2).takeIf { it != "none" }).joinToString(",")
+        }
+        // звук
+        if (cfg.bool(K.PASSTHROUGH)) o += "--spdif"
+        if (cfg.boostDb > 0) o += "--gain=" + "%.2f".format(Locale.US, 10.0.pow(cfg.boostDb / 20.0))
+        if (cfg.bool(K.NIGHT)) o += "--audio-filter=compressor"
+        // видео
+        // only old files reach libVLC: interlaced DVD and TV rips are common there, deinterlace when the file says so
+        o += "--deinterlace=-1"
+        return o
+    }
+
+    private fun onFirstPlay() {
+        if (started) return
+        started = true
+        player.setAudioDelay(audioDelayMs * 1000L)
+        player.setSpuDelay(subDelayMs * 1000L)
+        if (cfg.string(K.SUB_LANG) == "off") player.spuTrack = -1
     }
 
     override val position get() = player.time.coerceAtLeast(0)
@@ -52,20 +103,29 @@ class VlcEngine(ctx: Context, private val host: FrameLayout, private val listene
     private var headers: Map<String, String> = emptyMap()
 
     override fun setRequest(headers: Map<String, String>, mimeHint: String?) { this.headers = headers }
+    override fun setSubtitleEncoding(charset: String?) { subCharset = charset }
 
     override fun open(uri: Uri, startMs: Long, subs: List<Uri>) {
         length = 0
+        started = false
         val media = Media(vlc, uri)
         media.addOption(":network-caching=4000")
         // libVLC умеет только User-Agent и Referer; Cookie и Origin на запасном движке теряются.
         media.addOption(":http-user-agent=" + StreamRequest.userAgent(headers))
         StreamRequest.referer(headers)?.let { media.addOption(":http-referrer=$it") }
         if (startMs > 0) media.addOption(":start-time=%.1f".format(Locale.US, startMs / 1000.0))
+        subCharset?.let { media.addOption(":subsdec-encoding=$it") }
         // Старый XviD/DivX — программным декодером: он лёгкий, а аппаратный с ним капризничает.
-        media.setHWDecoderEnabled(!Engine.prefersVlc(uri), false)
+        val legacy = uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase() in LEGACY
+        when (cfg.string(K.DECODER)) {
+            "sw" -> media.setHWDecoderEnabled(false, false)
+            "hw" -> media.setHWDecoderEnabled(true, true)
+            else -> media.setHWDecoderEnabled(!legacy, false)
+        }
         player.media = media
         media.release()
-        for (s in subs) player.addSlave(IMedia.Slave.Type.Subtitle, s, false)
+        val pick = cfg.string(K.SUB_LANG) !in setOf("off", "forced")
+        subs.forEachIndexed { i, s -> player.addSlave(IMedia.Slave.Type.Subtitle, s, pick && i == 0) }
         player.play()
     }
 
@@ -119,6 +179,18 @@ class VlcEngine(ctx: Context, private val host: FrameLayout, private val listene
         }
     }
 
+    override fun setAspect(value: String) {
+        player.aspectRatio = when (value) {
+            "auto" -> null
+            "1.85" -> "185:100"
+            "2.35" -> "235:100"
+            else -> value
+        }
+    }
+
+    override fun setAudioDelay(ms: Int) { audioDelayMs = ms; player.setAudioDelay(ms * 1000L) }
+    override fun setSubtitleDelay(ms: Int) { subDelayMs = ms; player.setSpuDelay(ms * 1000L) }
+
     override fun release() {
         player.setEventListener(null)
         player.stop()
@@ -126,5 +198,10 @@ class VlcEngine(ctx: Context, private val host: FrameLayout, private val listene
         player.release()
         vlc.release()
         host.removeView(layout)
+    }
+
+    private companion object {
+        /** Old containers whose MPEG-4 ASP video decodes better in software. */
+        val LEGACY = setOf("avi", "divx", "wmv", "asf", "flv", "vob", "mpg", "mpeg", "rm", "rmvb", "3gp", "ogm")
     }
 }
