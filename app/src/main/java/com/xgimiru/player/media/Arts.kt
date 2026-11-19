@@ -64,7 +64,7 @@ object Arts {
                 wide = w?.let { parent + Uri.encode(it) }
             }
         }
-        if ((poster == null || wide == null) && Tmdb.enabled) {
+        if ((poster == null || wide == null) && Tmdb.enabled(ctx)) {
             val n = Name.parse(title)
             Tmdb.find(ctx, n.title, n.year, if (n.episode != null) true else null)?.let { m ->
                 if (poster == null) poster = m.poster("w342")
