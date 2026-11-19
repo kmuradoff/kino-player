@@ -25,10 +25,12 @@ class FileItem(val name: String, val uri: String, val dir: Boolean, val size: Lo
     var count = -1
     var inside: List<String> = emptyList()
     val title get() = if (dir) name else name.substringBeforeLast('.')
+    /** A .torrent file: OK opens it through the built-in TorrServer. */
+    val torrent get() = !dir && Kinds.isTorrent(name)
 }
 
-/** One folder listing plus every file name in it (pictures and subtitles are looked up by name). */
-class Listing(val items: List<FileItem>, val names: List<String>)
+/** One folder listing plus every file name in it (pictures and subtitles are looked up by name). [start]: row to open on. */
+class Listing(val items: List<FileItem>, val names: List<String>, val start: Int = 0)
 
 /** Where a folder list comes from: a USB stick or the device storage, or a network folder. */
 interface Source {
@@ -50,6 +52,7 @@ object Kinds {
     val SYSTEM = setOf("Android", "LOST.DIR", "System Volume Information", "\$RECYCLE.BIN", "DCIM")
     fun ext(name: String) = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
     fun isVideo(name: String) = ext(name) in VIDEO
+    fun isTorrent(name: String) = ext(name) == "torrent"
     fun order(a: FileItem, b: FileItem) = if (a.dir != b.dir) (if (a.dir) -1 else 1) else Fmt.natural(a.name, b.name)
 }
 
@@ -73,7 +76,7 @@ class LocalSource(private val ctx: Context, private val v: Places.Volume) : Sour
                 val langs = SubPrep.langs(ctx.playerSettings())
                 val items = files.mapNotNull { f ->
                     when {
-                        f.isDirectory -> f.listFiles()?.filter { !it.name.startsWith(".") && (it.isDirectory || Kinds.isVideo(it.name)) }.orEmpty().let { inner ->
+                        f.isDirectory -> f.listFiles()?.filter { !it.name.startsWith(".") && (it.isDirectory || Kinds.isVideo(it.name) || Kinds.isTorrent(it.name)) }.orEmpty().let { inner ->
                             // the size column of a folder: its films (one level down, no walk through the whole stick)
                             FileItem(f.name, Uri.fromFile(f).toString(), true, inner.filter { it.isFile }.sumOf { it.length() }.takeIf { it > 0 } ?: -1) to inner
                         }.let { (item, inner) ->
@@ -83,6 +86,7 @@ class LocalSource(private val ctx: Context, private val v: Places.Volume) : Sour
                         }.takeIf { it.count > 0 }
                         Kinds.isVideo(f.name) -> FileItem(f.name, Uri.fromFile(f).toString(), false, f.length(),
                             SubtitleText.match(f.name, names.filter { Kinds.ext(it) in Kinds.SUBS }, langs).map { Uri.fromFile(File(d, it)).toString() })
+                        Kinds.isTorrent(f.name) -> FileItem(f.name, Uri.fromFile(f).toString(), false, f.length())
                         else -> null
                     }
                 }.sortedWith(Kinds::order)

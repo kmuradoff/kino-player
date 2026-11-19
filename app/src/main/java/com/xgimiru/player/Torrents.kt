@@ -4,6 +4,7 @@ import android.app.ActivityManager
 import android.content.Context
 import android.net.Uri
 import android.system.Os
+import com.xgimiru.player.torrent.TorrentFiles
 import com.xgimiru.player.ui.tr
 import org.json.JSONArray
 import org.json.JSONObject
@@ -287,4 +288,54 @@ object TorrApi {
         c.outputStream.use { it.write(body.toString().toByteArray()) }
         return read(c)
     }
+
+    /** Adds a magnet, a hash or a link to a .torrent file (the engine downloads it). Returns the status. */
+    fun add(base: String, link: String, title: String? = null): JSONObject {
+        val body = JSONObject().put("action", "add").put("link", link).put("save_to_db", true)
+        if (!title.isNullOrBlank()) body.put("title", title)
+        return JSONObject(post(base, "/torrents", body, 30_000))
+    }
+
+    /** Uploads the content of a .torrent file. Returns the status. */
+    fun upload(base: String, torrent: ByteArray, name: String): JSONObject {
+        val boundary = "lumen" + System.nanoTime()
+        val c = open("$base/torrent/upload", 30_000)
+        c.requestMethod = "POST"
+        c.doOutput = true
+        c.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+        c.outputStream.use { out ->
+            fun line(s: String) = out.write((s + "\r\n").toByteArray())
+            line("--$boundary")
+            line("Content-Disposition: form-data; name=\"save\"")
+            line("")
+            line("true")
+            line("--$boundary")
+            line("Content-Disposition: form-data; name=\"file\"; filename=\"${name.replace("\"", "")}\"")
+            line("Content-Type: application/x-bittorrent")
+            line("")
+            out.write(torrent)
+            line("")
+            line("--$boundary--")
+        }
+        val text = read(c)
+        return if (text.trimStart().startsWith("[")) JSONArray(text).getJSONObject(0) else JSONObject(text)
+    }
+
+    fun status(base: String, hash: String): JSONObject =
+        JSONObject(post(base, "/torrents", JSONObject().put("action", "get").put("hash", hash)))
+
+    fun files(status: JSONObject): List<TorrentFiles.File> {
+        val arr = status.optJSONArray("file_stats") ?: return emptyList()
+        return (0 until arr.length()).map { arr.getJSONObject(it) }
+            .map { TorrentFiles.File(it.optInt("id"), it.optString("path"), it.optLong("length")) }
+    }
+
+    /** Link to one file of the torrent for the player, marked as the built-in engine's ([TorrEngine.MARK]). */
+    fun streamUri(base: String, hash: String, f: TorrentFiles.File): Uri =
+        Uri.parse(base).buildUpon().appendPath("stream").appendPath(f.name)
+            .appendQueryParameter("link", hash)
+            .appendQueryParameter("index", f.id.toString())
+            .appendQueryParameter("play", "")
+            .appendQueryParameter(TorrEngine.MARK, "1")
+            .build()
 }

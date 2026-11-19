@@ -35,7 +35,15 @@ class Rail(ctx: Context, private val onOpen: (String) -> Unit) : FrameLayout(ctx
 
     init {
         setBackgroundColor(Ui.RAIL)
-        val lock = LinearLayout(ctx).apply {
+        addView(brand(ctx), Ui.frame(-1, p(52)).apply { leftMargin = p(36); rightMargin = p(28); topMargin = p(52) })
+        addView(scroll, Ui.frame(-1, -1).apply { leftMargin = p(36); rightMargin = p(28); topMargin = p(104); bottomMargin = p(44 + 68 + 16) })
+        addView(bottom, Ui.frame(-1, p(68), Gravity.BOTTOM).apply { leftMargin = p(36); rightMargin = p(28); bottomMargin = p(44) })
+    }
+
+    companion object {
+        /** App icon and name at the top of the left list (also on the torrent screen). */
+        fun brand(ctx: Context): View = LinearLayout(ctx).apply {
+            val p = { v: Number -> Ui.px(ctx, v) }
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             setPadding(p(12), 0, 0, 0)
             addView(ImageView(ctx).apply {
@@ -47,9 +55,6 @@ class Rail(ctx: Context, private val onOpen: (String) -> Unit) : FrameLayout(ctx
             }, Ui.linear(p(48), p(48)).apply { rightMargin = p(16) })
             addView(Ui.t(ctx, 30, 680, Ui.T1, spacing = -.4f).apply { text = "Lumen Play" })
         }
-        addView(lock, Ui.frame(-1, p(52)).apply { leftMargin = p(36); rightMargin = p(28); topMargin = p(52) })
-        addView(scroll, Ui.frame(-1, -1).apply { leftMargin = p(36); rightMargin = p(28); topMargin = p(104); bottomMargin = p(44 + 68 + 16) })
-        addView(bottom, Ui.frame(-1, p(68), Gravity.BOTTOM).apply { leftMargin = p(36); rightMargin = p(28); bottomMargin = p(44) })
     }
 
     fun set(groups: List<Group>, last: Item) {

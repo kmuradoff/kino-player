@@ -33,6 +33,7 @@ import com.xgimiru.player.ui.Ui
 import com.xgimiru.player.ui.chip
 import com.xgimiru.player.ui.round
 import com.xgimiru.player.ui.tr
+import com.xgimiru.player.TorrentActivity
 
 /**
  * A folder as a table: name, length, quality, size, with the focused file's card on the right (picture,
@@ -159,7 +160,7 @@ class FolderPane(private val act: Activity, private val nav: Nav, val source: So
             if (stack.lastOrNull()?.second != uri) return@list
             listing = l
             items = l?.items.orEmpty()
-            val at = restore[uri]?.coerceAtMost(items.size - 1) ?: 0
+            val at = (restore[uri] ?: l?.start ?: 0).coerceAtMost(items.size - 1)
             (list.adapter as BaseAdapter).notifyDataSetChanged()
             meta.text = Fmt.objects(items.size, ru) + tr(", по имени", ", by name")
             message.text = when {
@@ -196,9 +197,10 @@ class FolderPane(private val act: Activity, private val nav: Nav, val source: So
             restore[stack.last().second] = pos
             open(f.name, f.uri); return
         }
+        if (f.torrent) { act.startActivity(Intent(act, TorrentActivity::class.java).setData(Uri.parse(f.uri))); return }
         if (fromStart) History.forget(act, History.key(Uri.parse(f.uri)))
         // the whole folder is the list: the next episode starts by itself
-        val videos = items.filter { !it.dir }
+        val videos = items.filter { !it.dir && !it.torrent }
         act.startActivity(Intent(act, PlayerActivity::class.java)
             .setData(Uri.parse(f.uri))
             .putExtra("title", f.title)
@@ -223,7 +225,7 @@ class FolderPane(private val act: Activity, private val nav: Nav, val source: So
 
     // ── Rows ──
     private fun probeAll() {
-        for (f in items) if (!f.dir) Probe.get(act, f.uri, deep = false) { if (it.durationMs > 0 || it.width > 0) refreshRow(f) }
+        for (f in items) if (!f.dir && !f.torrent) Probe.get(act, f.uri, deep = false) { if (it.durationMs > 0 || it.width > 0) refreshRow(f) }
     }
 
     private fun refreshRow(f: FileItem) {
@@ -301,17 +303,17 @@ class FolderPane(private val act: Activity, private val nav: Nav, val source: So
             }
             sz.text = if (f.size > 0) Fmt.size(f.size, ru) else ""
             qc.removeAllViews()
-            if (!f.dir) Badges.chips(facts, f.name).forEach { qc.addView(chip(act, it), Ui.linear(-2, p(28)).apply { rightMargin = p(6) }) }
-            val h = if (f.dir) null else History.get(act, History.key(Uri.parse(f.uri)))
-            watched = !f.dir && History.watched(act).any { it.key == History.key(Uri.parse(f.uri)) }
+            if (!f.dir && !f.torrent) Badges.chips(facts, f.name).forEach { qc.addView(chip(act, it), Ui.linear(-2, p(28)).apply { rightMargin = p(6) }) }
+            val h = if (f.dir || f.torrent) null else History.get(act, History.key(Uri.parse(f.uri)))
+            watched = !f.dir && !f.torrent && History.watched(act).any { it.key == History.key(Uri.parse(f.uri)) }
             progress = h?.takeIf { !it.finished }?.progress ?: 0f
             pb.visibility = if (progress > 0f) VISIBLE else GONE
             pb.post { pbFill.layoutParams = pbFill.layoutParams.apply { width = (pb.width * progress).toInt() }; pbFill.requestLayout() }
             done.visibility = if (watched) VISIBLE else GONE
-            poIcon.setImageDrawable(Ui.icon(act, if (f.dir) R.drawable.ic_folder else R.drawable.ic_movie, Ui.T3))
+            poIcon.setImageDrawable(Ui.icon(act, when { f.dir -> R.drawable.ic_folder; f.torrent -> R.drawable.ic_download; else -> R.drawable.ic_movie }, Ui.T3))
             if (!same) poImg.setImageDrawable(null)
             poIcon.visibility = VISIBLE
-            if (!f.dir) Arts.find(act, f.uri, f.title, listing?.names) { a ->
+            if (!f.dir && !f.torrent) Arts.find(act, f.uri, f.title, listing?.names) { a ->
                 // an episode without a poster shows its own still ("S02E22-thumb.jpg"), never the folder's fanart on every row
                 val base = f.name.substringBeforeLast('.')
                 val own = a.wide?.takeIf { Uri.decode(it.substringAfterLast('/')).startsWith(base) }
@@ -340,8 +342,9 @@ class FolderPane(private val act: Activity, private val nav: Nav, val source: So
         val f = items.getOrNull(pos) ?: run { insp.removeAllViews(); return }
         if (pos == shownAt && insp.childCount > 0) return
         shownAt = pos
-        okLabel.text = if (f.dir) tr("Открыть", "Open") else tr("Смотреть", "Watch")
-        longOk.visibility = if (f.dir) View.GONE else View.VISIBLE
+        okLabel.text = if (f.dir || f.torrent) tr("Открыть", "Open") else tr("Смотреть", "Watch")
+        longOk.visibility = if (f.dir || f.torrent) View.GONE else View.VISIBLE
+        if (f.torrent) { torrentCard(f); return }
         if (f.dir) folderCard(f) else fileCard(f, Probe.cached(f.uri))
         if (!f.dir) Probe.get(act, f.uri, deep = true) { facts -> if (shownAt == pos && items.getOrNull(pos) === f) fileCard(f, facts) }
     }
@@ -358,6 +361,22 @@ class FolderPane(private val act: Activity, private val nav: Nav, val source: So
         col.addView(Ui.t(act, 23, 450, Ui.T2).apply { text = tr("Папка", "Folder") + if (f.count >= 0) " · " + Fmt.files(f.count, ru) else "" },
             Ui.linear(-1, -2).apply { topMargin = p(10) })
         if (f.inside.isNotEmpty()) col.addView(kv(listOf(tr("Внутри", "Inside") to f.inside.joinToString("\n"))), Ui.linear(-1, -2).apply { topMargin = p(26) })
+        insp.addView(col, Ui.frame(-1, -2))
+    }
+
+    private fun torrentCard(f: FileItem) {
+        insp.removeAllViews()
+        val col = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(stillBox().apply {
+            addView(ImageView(act).apply { setImageDrawable(Ui.icon(act, R.drawable.ic_download, Ui.T3)) }, Ui.frame(p(110), p(110), Gravity.CENTER))
+        }, Ui.linear(p(404), p(227)))
+        col.addView(Ui.t(act, 36, 680, Ui.T1, 2, spacing = -.5f).apply { text = f.title }, Ui.linear(-1, -2).apply { topMargin = p(26) })
+        col.addView(Ui.t(act, 23, 450, Ui.T2).apply { text = tr("Торрент", "Torrent") + if (f.size > 0) " · " + Fmt.size(f.size, ru) else "" },
+            Ui.linear(-1, -2).apply { topMargin = p(10) })
+        col.addView(Ui.t(act, 21, 450, Ui.T3, 4).apply {
+            text = tr("Откроется во встроенном TorrServer: список видео, потом просмотр.", "Opens in the built-in TorrServer: the list of videos, then playback.")
+            setLineSpacing(0f, 1.3f)
+        }, Ui.linear(-1, -2).apply { topMargin = p(26) })
         insp.addView(col, Ui.frame(-1, -2))
     }
 
