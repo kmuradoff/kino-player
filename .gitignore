@@ -39,3 +39,6 @@ torrserver/out/
 
 # Release folders (release/<version>/): APKs and the TorrServer source archive are release assets, not git
 release/**/*.tar.gz
+
+# TMDB key added to the release APK at signing time, never in git
+app/src/main/assets/tmdb_key

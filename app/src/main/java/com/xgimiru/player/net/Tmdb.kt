@@ -163,16 +163,23 @@ data class Meta(
 }
 
 /**
- * TMDB: обложки и названия для «Продолжить просмотр». Ключ попадает в APK только при сборке (BuildConfig.TMDB_KEY из
- * файла на машине сборки); без ключа всё молча выключено. Ответы кэшируются на диске (30 дней, промахи — сутки).
+ * TMDB: обложки и названия для «Продолжить просмотр». Ключ попадает в APK только при сборке или подписи (BuildConfig.TMDB_KEY
+ * из файла на машине сборки или assets/tmdb_key), без ключа всё молча выключено. Ответы кэшируются на диске (30 дней, промахи — сутки).
  * This product uses the TMDB API but is not endorsed or certified by TMDB.
  */
 object Tmdb {
-    val enabled get() = BuildConfig.TMDB_KEY.isNotEmpty()
+    /** The key: BuildConfig.TMDB_KEY, else assets/tmdb_key that the release signing step adds to the APK. */
+    @Volatile private var key: String? = null
+
+    private fun key(ctx: Context): String = key ?: BuildConfig.TMDB_KEY.ifEmpty {
+        runCatching { ctx.applicationContext.assets.open("tmdb_key").bufferedReader().use { it.readText().trim() } }.getOrDefault("")
+    }.also { key = it }
+
+    fun enabled(ctx: Context) = key(ctx).isNotEmpty()
     private val lang get() = if (Locale.getDefault().language == "ru") "ru-RU" else Locale.getDefault().toLanguageTag()
 
-    private fun get(path: String, params: Map<String, String>, language: String = lang): JSONObject {
-        val q = (params + mapOf("api_key" to BuildConfig.TMDB_KEY, "language" to language))
+    private fun get(ctx: Context, path: String, params: Map<String, String>, language: String = lang): JSONObject {
+        val q = (params + mapOf("api_key" to key(ctx), "language" to language))
             .entries.joinToString("&") { it.key + "=" + URLEncoder.encode(it.value, "UTF-8") }
         return JSONObject(Resolve.open("https://api.themoviedb.org/3$path?$q").bufferedReader().use { it.readText() })
     }
@@ -187,7 +194,7 @@ object Tmdb {
      * сериал, если есть сезон/серия; при равенстве — популярность. Блокирующее: не из главного потока.
      */
     fun find(ctx: Context, title: String, year: String? = null, tv: Boolean? = null): Meta? {
-        if (!enabled || title.isBlank()) return null
+        if (!enabled(ctx) || title.isBlank()) return null
         val key = "find|$lang|$title|$year|$tv"
         val f = cacheFile(ctx, key)
         if (f.exists()) {
@@ -199,7 +206,7 @@ object Tmdb {
         val m = runCatching {
             // кириллическое название ищем по-русски: так оно совпадёт с русским названием в TMDB
             val language = if (title.any { it in 'а'..'я' || it in 'А'..'Я' || it == 'ё' || it == 'Ё' }) "ru-RU" else lang
-            val res = get("/search/multi", mapOf("query" to title), language).optJSONArray("results") ?: return@runCatching null
+            val res = get(ctx, "/search/multi", mapOf("query" to title), language).optJSONArray("results") ?: return@runCatching null
             val want = norm(title)
             (0 until res.length()).mapNotNull { Meta.from(res.getJSONObject(it)) }
                 .maxByOrNull { x ->
@@ -220,7 +227,7 @@ object Tmdb {
      * главного потока.
      */
     fun still(ctx: Context, m: Meta, season: String, episode: String): String? {
-        if (!enabled || !m.tv) return null
+        if (!enabled(ctx) || !m.tv) return null
         val key = "still|${m.id}|$season|$episode"
         val f = cacheFile(ctx, key)
         if (f.exists()) {
@@ -229,7 +236,7 @@ object Tmdb {
             if (txt == "-" && age < 86400_000L) return null
             if (txt != "-" && age < 30L * 86400_000L) return ContinueArt.tmdb(txt)
         }
-        val path = runCatching { get("/tv/${m.id}/season/$season/episode/$episode", emptyMap()).optString("still_path") }
+        val path = runCatching { get(ctx, "/tv/${m.id}/season/$season/episode/$episode", emptyMap()).optString("still_path") }
             .onFailure { android.util.Log.w("LumenTmdb", "still ${m.id} s$season e$episode: $it") }
             .getOrElse { return null }
             .takeIf { it.startsWith("/") }
