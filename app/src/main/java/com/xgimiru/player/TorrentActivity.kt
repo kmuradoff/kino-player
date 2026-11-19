@@ -8,7 +8,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Parcelable
 import android.provider.OpenableColumns
-import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.widget.FrameLayout
@@ -44,7 +43,6 @@ class TorrentActivity : Activity(), Nav {
     private lateinit var content: FrameLayout
     private lateinit var heading: android.widget.TextView
     private lateinit var facts: LinearLayout
-    private lateinit var note: android.widget.TextView
     private var pane: FolderPane? = null
     private var base: String? = null
     private var hash: String? = null
@@ -81,8 +79,6 @@ class TorrentActivity : Activity(), Nav {
         facts = LinearLayout(this@TorrentActivity).apply { orientation = LinearLayout.VERTICAL }
         col.addView(facts, Ui.linear(-1, -2).apply { topMargin = p(30) })
         addView(col, Ui.frame(-1, -2).apply { leftMargin = p(36); rightMargin = p(28); topMargin = p(150) })
-        note = Ui.t(this@TorrentActivity, 19, 450, Ui.T3, 3).apply { setLineSpacing(0f, 1.3f) }
-        addView(note, Ui.frame(-1, -2, Gravity.BOTTOM).apply { leftMargin = p(52); rightMargin = p(28); bottomMargin = p(48) })
     }
 
     private fun fact(k: String, v: String) {
@@ -175,7 +171,6 @@ class TorrentActivity : Activity(), Nav {
     private fun load(uri: Uri) {
         try {
             val b = TorrEngine.start(this)
-            handler.post { note.text = tr("Встроенный TorrServer", "Built-in TorrServer") }
             say(tr("Добавляю торрент…", "Adding the torrent…"))
             val added = when (uri.scheme?.lowercase()) {
                 "magnet", "http", "https" -> TorrApi.add(b, uri.toString(), TorrentFiles.magnetName(uri.toString()))
