@@ -14,7 +14,7 @@ import com.xgimiru.player.R
 /**
  * The player's panel: drops from the top over the picture, title with badges, four columns (Субтитры, Звук,
  * Задержка, Картинка). Always dark, whatever the app theme: it sits over a film. Rows with a value change it
- * with OK; a delay row turns Left / Right into steps after OK and gives them back after OK or Back.
+ * with OK. A delay row turns Left / Right into steps after OK and gives them back after OK or Back.
  */
 class PlayerSheet(ctx: Context) : FrameLayout(ctx) {
     /** One row: a choice with a check mark, or a value row with an icon. */

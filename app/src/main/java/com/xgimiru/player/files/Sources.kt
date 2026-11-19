@@ -36,7 +36,7 @@ interface Source {
     val title: String
     val root: String
     val network: Boolean
-    /** Lists [dir]; [done] runs on the main thread with the listing or an error text. */
+    /** Lists [dir], [done] runs on the main thread with the listing or an error text. */
     fun list(dir: String, done: (Listing?, String?) -> Unit)
     /** Left part of the status line: free space or the server. */
     fun status(): String?
@@ -96,7 +96,7 @@ class LocalSource(private val ctx: Context, private val v: Places.Volume) : Sour
 }
 
 /**
- * A network folder. SMB shares are listed by the SMB reader (sizes included); a server root, NFS, FTP, SFTP,
+ * A network folder. SMB shares are listed by the SMB reader (sizes included). A server root, NFS, FTP, SFTP,
  * DLNA, and an SMB server the reader cannot talk to are listed by libVLC.
  */
 class ShareSource(private val ctx: Context, override val id: String, override val title: String, override val root: String,

@@ -26,7 +26,7 @@ object Places {
         }.sortedBy { it.primary }
     }
 
-    /** "KINGSTON" -> "Флешка KINGSTON"; a system name that already says USB stays as it is. */
+    /** "KINGSTON" -> "Флешка KINGSTON", a system name that already says USB stays as it is. */
     fun usbName(label: String): String {
         val l = label.trim()
         if (l.isEmpty()) return tr("Флешка", "USB stick")

@@ -31,7 +31,7 @@ import android.app.AlertDialog
 import android.graphics.drawable.GradientDrawable
 
 /**
- * Плеер Lumen Play. Играет всегда Media3; libVLC только там, где Media3 не может (см. [EngineRules]):
+ * Плеер Lumen Play. Играет всегда Media3, libVLC только там, где Media3 не может (см. [EngineRules]):
  * папки NFS, FTP, SFTP и файлы, формат которых Media3 не поддерживает. Понимает параметры, которые другие
  * приложения передают внешним плеерам (MX Player, VLC), и возвращает, где остановились.
  * Поведение задают настройки плеера ([K]): перемотка, кнопки, продолжение, звук, субтитры.

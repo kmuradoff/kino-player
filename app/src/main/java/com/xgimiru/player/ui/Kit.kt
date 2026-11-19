@@ -14,7 +14,7 @@ interface Pane {
     /** The pane became visible: refresh its data. */
     fun onShow() {}
     fun onHide() {}
-    /** Give focus to the pane's first (or last used) element; false when it has nothing to focus. */
+    /** Give focus to the pane's first (or last used) element, false when it has nothing to focus. */
     fun focusFirst(): Boolean
     /** Back inside the pane (close a choice, go up a folder). true when handled. */
     fun onBack(): Boolean = false
