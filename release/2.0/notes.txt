@@ -1,0 +1,23 @@
+Lumen Play 2.0
+
+Новый вид. Слева список мест: продолжить, история, флешки, память устройства, папки в сети и настройки. Справа папка таблицей и карточка фильма. Тёмная тема по умолчанию, светлую можно включить в настройках.
+Видео играет движок Media3 на аппаратных декодерах, включая 4K HDR и Dolby Vision. VLC подключается только там, где Media3 не справляется.
+Папки в сети: SMB, NFS, FTP, SFTP и серверы DLNA. Пароли хранятся в зашифрованном виде.
+Настройки плеера как в Kodi: декодер, передача звука на ресивер по форматам, задержка звука, вид и кодировка субтитров, шаг перемотки.
+Трансляция с телефона по DLNA и отправка видео из браузера на компьютере.
+Встроенный TorrServer для Лампы.
+Ссылки magnet и файлы .torrent открываются в Lumen Play: видео из торрента видны как папка.
+Каталога торрентов и IPTV в приложении больше нет.
+
+Для тех, кто смотрит через Лампу: если в Lumen Play был включён TorrServer для других приложений, он так и остаётся включённым, адрес прежний, 127.0.0.1:8090. В Лампе ничего менять не нужно.
+
+New look. A list of places on the left: Continue, History, USB sticks, device storage, network folders and Settings. On the right a folder as a table with a card for the film. Dark theme by default, a light one can be picked in the settings.
+Video plays through the Media3 engine on the hardware decoders, 4K HDR and Dolby Vision included. VLC steps in only where Media3 cannot play a file.
+Network folders: SMB, NFS, FTP, SFTP and DLNA servers. Passwords are stored encrypted.
+Player settings like in Kodi: decoder, audio passthrough per format, audio delay, subtitle look and encoding, seek steps.
+Casting from a phone over DLNA and sending a video from a computer browser.
+Built-in TorrServer for Lampa.
+Magnet links and .torrent files open in Lumen Play: the videos of a torrent show up like a folder.
+The torrent catalogue and IPTV are no longer in the app.
+
+Lampa users: if TorrServer for other apps was on in Lumen Play, it stays on at the same address, 127.0.0.1:8090. Nothing to change in Lampa.
