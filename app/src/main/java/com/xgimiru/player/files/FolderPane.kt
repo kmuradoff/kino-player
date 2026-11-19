@@ -52,7 +52,7 @@ class FolderPane(private val act: Activity, private val nav: Nav, val source: So
     private val crumb = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
     private val meta = Ui.t(act, 21, 450, Ui.T3)
     private val list = ListView(act)
-    private val message = Ui.t(act, 25, 450, Ui.T2, 3)
+    private val message = Ui.t(act, 25, 450, Ui.T2, 3).apply { setDefaultFocusHighlightEnabled(false) }
     private val insp = FrameLayout(act)
     private val statusLeft = Ui.t(act, 20, 450, Ui.T3)
     private val okLabel = Ui.t(act, 20, 450, Ui.T3)
@@ -142,7 +142,12 @@ class FolderPane(private val act: Activity, private val nav: Nav, val source: So
         val (_, uri) = stack.last()
         paintCrumb()
         // the table empties while the next folder is read: its focus comes back to it, not to the left list
-        if (list.hasFocus()) wantFocus = true
+        if (list.hasFocus()) {
+            wantFocus = true
+            // the empty table cannot hold the focus: the "Opening…" line keeps it inside the folder, never the left list
+            message.isFocusable = true
+            message.requestFocus()
+        }
         if (!keep) { items = emptyList(); (list.adapter as BaseAdapter).notifyDataSetChanged(); insp.removeAllViews() }
         message.text = tr("Открываю…", "Opening…")
         message.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
@@ -162,6 +167,7 @@ class FolderPane(private val act: Activity, private val nav: Nav, val source: So
             message.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
             if (items.isNotEmpty()) list.setSelection(at.coerceAtLeast(0))
             if (wantFocus && items.isNotEmpty()) { wantFocus = false; list.requestFocus() }
+            message.isFocusable = message.hasFocus() && items.isEmpty()
             shownAt = -1
             inspect(list.selectedItemPosition.coerceAtLeast(0))
             probeAll()
