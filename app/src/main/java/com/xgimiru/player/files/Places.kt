@@ -61,14 +61,17 @@ object Places {
             val path = u.path ?: return null
             val v = volumes(ctx).filter { path.startsWith(it.dir.path) }.maxByOrNull { it.dir.path.length } ?: return null
             val parts = path.removePrefix(v.dir.path).trim('/').split('/').dropLast(1).filter { it.isNotEmpty() }
-            return (listOf(v.name) + parts.takeLast(2)).joinToString(sep)
+            return (listOf(v.name) + shortPath(parts)).joinToString(sep)
         }
         val share = NetShares.saved(ctx).filter { uri.startsWith(it.uri, true) }.maxByOrNull { it.uri.length }
         val rel = if (share != null) uri.substring(share.uri.length) else ShareUri.strip(uri).substringAfter("://").substringAfter('/')
         val parts = rel.trim('/').split('/').dropLast(1).filter { it.isNotEmpty() }.map { Uri.decode(it) }
         val root = share?.name ?: ShareUri.server(uri)?.substringAfter("://") ?: return null
-        return (listOf(root) + parts.takeLast(2)).joinToString(sep)
+        return (listOf(root) + shortPath(parts)).joinToString(sep)
     }
+
+    /** "Сериалы › Сезон 2" for Сериалы/Отчаянные домохозяйки/Сезон 2: the first folder and the one with the file. */
+    fun shortPath(parts: List<String>): List<String> = if (parts.size > 2) listOf(parts.first(), parts.last()) else parts
 }
 
 /**

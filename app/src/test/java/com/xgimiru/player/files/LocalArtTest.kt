@@ -18,6 +18,11 @@ class LocalArtTest {
         assertEquals(null to null, LocalArt.pick("Свадьба.mp4", listOf("Свадьба.mp4", "notes.txt")))
     }
 
+    @Test fun whereTheFileLiesIsShort() {
+        assertEquals(listOf("Сериалы", "Сезон 2"), Places.shortPath(listOf("Сериалы", "Отчаянные домохозяйки", "Сезон 2")))
+        assertEquals(listOf("Фильмы"), Places.shortPath(listOf("Фильмы")))
+    }
+
     @Test fun usbNames() {
         assertEquals("USB drive", Places.usbName("USB drive"))
     }

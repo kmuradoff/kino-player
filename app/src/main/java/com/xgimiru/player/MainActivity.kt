@@ -148,6 +148,13 @@ class MainActivity : Activity(), Nav {
 
     override fun focusRail() { rail.focusCurrent() }
 
+    /** The first time the window gets the focus the open place takes it (Android may have put it anywhere). */
+    private var placed = false
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && !placed) { placed = true; if (panes[current]?.focusFirst() != true) rail.focusCurrent() }
+    }
+
     // ── Keys ──
     override fun dispatchKeyEvent(e: KeyEvent): Boolean {
         if ((panes[current] as? SettingsPane)?.onKey(e) == true) return true

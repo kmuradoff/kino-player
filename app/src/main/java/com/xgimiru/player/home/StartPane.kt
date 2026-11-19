@@ -170,11 +170,14 @@ class StartPane(private val act: Activity, private val nav: Nav, private val his
         return r
     }
 
-    private fun progress(f: Float, h: Int): View = FrameLayout(act).apply {
-        setBackgroundColor(0x47FFFFFF)
-        val fill = View(act).apply { setBackgroundColor(Ui.ACC) }
-        addView(fill, Ui.frame(0, -1))
-        post { fill.layoutParams = fill.layoutParams.apply { width = (this@apply.width * f.coerceIn(0f, 1f)).toInt() }; fill.requestLayout() }
+    /** Played part of the film: blue over a faint line, drawn at its real width whenever it is laid out. */
+    private fun progress(f: Float, @Suppress("UNUSED_PARAMETER") h: Int): View = object : View(act) {
+        private val back = android.graphics.Paint().apply { color = 0x47FFFFFF }
+        private val fill = android.graphics.Paint().apply { color = Ui.ACC }
+        override fun onDraw(c: android.graphics.Canvas) {
+            c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), back)
+            c.drawRect(0f, 0f, width * f.coerceIn(0f, 1f), height.toFloat(), fill)
+        }
     }
 
     override fun focusFirst(): Boolean {

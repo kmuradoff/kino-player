@@ -89,6 +89,8 @@ object Formats {
     fun titleFromPath(path: String?): String {
         val name = path?.substringAfterLast('/')?.substringBeforeLast('.') ?: return "Видео"
         return runCatching { java.net.URLDecoder.decode(name.replace("+", "%2B"), "UTF-8") }.getOrDefault(name)
+                        // "Дюна. Часть вторая" keeps its second part after a colon, dotted release names get spaces
+            .let { if (' ' in it) it.replace(Regex("(\\p{L}{3,})\\. (?=\\p{Lu})"), "$1: ") else it }
             .replace('.', ' ').replace('_', ' ').replace(Regex("\\s+"), " ").trim().ifBlank { "Видео" }
     }
 }

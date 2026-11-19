@@ -275,6 +275,10 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
         return Badges.card(MediaFacts(width = w, height = h, hdr = hdr, dolbyVision = dv, atmos = atmos))
     }
 
+    override fun liftSubtitles(px: Int) {
+        subView.animate().translationY(-px.toFloat()).setDuration(220).start()
+    }
+
     override fun play() = player.play()
     override fun pause() = player.pause()
     override fun seekTo(ms: Long) = player.seekTo(ms)

@@ -69,6 +69,9 @@ interface Engine {
     fun setAudioDelay(ms: Int) {}
     /** Задержка субтитров, мс: плюс — позже. */
     fun setSubtitleDelay(ms: Int) {}
+
+    /** Subtitles step over the progress bar while it is shown ([px] up, 0 back). */
+    fun liftSubtitles(px: Int) {}
     /** Кодировка внешних субтитров для движка, который читает их сам (VLC). null — как решит движок. */
     fun setSubtitleEncoding(charset: String?) {}
 

@@ -652,6 +652,7 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
     private fun setControls(show: Boolean) {
         if (!show && (paused || panelOpen)) return   // на паузе панели не прячем
         controlsShown = show
+        engine?.liftSubtitles(if (show) (resources.displayMetrics.heightPixels * 0.11f).toInt() else 0)
         controls.animate().alpha(if (show) 1f else 0f).setDuration(if (show) 180 else 400)
             .setInterpolator(DecelerateInterpolator()).start()
     }
@@ -958,7 +959,9 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         }
 
         val base = intent.getStringExtra("title")
-        val title = if (items.size > 1 && base != null) base else current()?.title ?: ""
+        val raw = if (items.size > 1 && base != null) base else current()?.title ?: ""
+        val n = Name.parse(raw)
+        val title = if (n.title.isBlank()) raw else n.title + (if (n.episode != null) tr(" · Сезон ${n.season ?: 1}, серия ${n.episode}", " · Season ${n.season ?: 1}, episode ${n.episode}") else "")
         val engineName = if (engineIsVlc) tr("Движок VLC", "VLC engine") else tr("Движок Media3", "Media3 engine")
         sheet.set(title, eng.badges(), engineName, listOf(
             com.xgimiru.player.ui.PlayerSheet.Column(tr("Субтитры", "Subtitles"), subs),

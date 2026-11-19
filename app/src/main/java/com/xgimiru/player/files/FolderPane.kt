@@ -141,6 +141,8 @@ class FolderPane(private val act: Activity, private val nav: Nav, val source: So
     private fun load(keep: Boolean = false) {
         val (_, uri) = stack.last()
         paintCrumb()
+        // the table empties while the next folder is read: its focus comes back to it, not to the left list
+        if (list.hasFocus()) wantFocus = true
         if (!keep) { items = emptyList(); (list.adapter as BaseAdapter).notifyDataSetChanged(); insp.removeAllViews() }
         message.text = tr("Открываю…", "Opening…")
         message.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
