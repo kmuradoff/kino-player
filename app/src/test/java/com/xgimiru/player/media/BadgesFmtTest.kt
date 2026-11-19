@@ -26,6 +26,8 @@ class BadgesFmtTest {
         val f = MediaFacts(width = 3840, height = 2160, hdr = "HDR10", dolbyVision = true, atmos = true, audio = listOf("rus", "eng"), subs = listOf("ru", "en", "ru"), quick = false)
         assertEquals(listOf("4K", "HDR10", "Dolby Vision", "Atmos"), Badges.card(f))
         assertEquals("RU, EN", Badges.short(f.subs))
+        // a file that did not tell its picture size keeps the quality of its name
+        assertEquals(listOf("4K", "HDR10"), Badges.card(MediaFacts(hdr = "HDR10", quick = false), "Дюна 2160p HDR.mkv"))
         assertEquals("Русский, английский", Badges.names(f.audio, ru = true))
         assertEquals("Русские, английские", Badges.names(f.subs, ru = true, plural = true))
         assertEquals("Russian, English", Badges.names(f.audio, ru = false))

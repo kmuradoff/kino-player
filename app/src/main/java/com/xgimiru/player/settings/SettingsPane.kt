@@ -79,9 +79,15 @@ class SettingsPane(private val act: Activity) : Pane {
         val want = pending?.first ?: tabs[tab].id
         tab = tabs.indexOfFirst { it.id == want }.coerceAtLeast(0)
         showTab(tab)
-        pending?.second?.let { k -> root.post { rowViews().firstOrNull { (it.tag as? Setting)?.key == k || it.tag == k }?.requestFocus() } }
+        // asked for from outside (the player, a theme change): kept until the user presses a key, because Android
+        // may focus the first category while the window is laid out and that would switch the section back
+        wantTab = tab
+        wantKey = pending?.second
         pending = null
     }
+
+    private var wantTab: Int? = null
+    private var wantKey: String? = null
 
     private fun build() {
         built = true
@@ -429,7 +435,11 @@ class SettingsPane(private val act: Activity) : Pane {
             .show()
     }
 
-    override fun focusFirst(): Boolean = catViews.getOrNull(tab)?.requestFocus() == true
+    override fun focusFirst(): Boolean {
+        wantTab?.let { if (tab != it) showTab(it) }
+        val row = wantKey?.let { k -> rowViews().firstOrNull { (it.tag as? Setting)?.key == k || it.tag == k } }
+        return (row ?: catViews.getOrNull(tab))?.requestFocus() == true
+    }
 
     /** Inside the settings: Back closes the choices, then goes from the rows to the sections. */
     override fun onBack(): Boolean {
@@ -440,6 +450,7 @@ class SettingsPane(private val act: Activity) : Pane {
 
     /** Left in the choices closes them (they sit where the rows were). */
     fun onKey(e: KeyEvent): Boolean {
+        wantTab = null; wantKey = null
         if (sheetKey != null && e.keyCode == KeyEvent.KEYCODE_DPAD_LEFT) { if (e.action == KeyEvent.ACTION_UP) closeSheet(); return true }
         return false
     }

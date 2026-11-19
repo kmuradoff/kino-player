@@ -50,9 +50,9 @@ object Badges {
         return listOfNotNull(q, if (hdr) "HDR" else null)
     }
 
-    /** Chips of the file card and the player: 4K, HDR10, Dolby Vision, Atmos. */
-    fun card(f: MediaFacts): List<String> = listOfNotNull(
-        quality(f.width, f.height),
+    /** Chips of the file card and the player: 4K, HDR10, Dolby Vision, Atmos. The name tells the quality when the file did not. */
+    fun card(f: MediaFacts, name: String? = null): List<String> = listOfNotNull(
+        quality(f.width, f.height) ?: name?.let { fromName(it).first },
         f.hdr,
         if (f.dolbyVision) "Dolby Vision" else null,
         if (f.atmos) "Atmos" else null,

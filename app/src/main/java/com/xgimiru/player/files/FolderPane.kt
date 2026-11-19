@@ -378,7 +378,7 @@ class FolderPane(private val act: Activity, private val nav: Nav, val source: So
         col.addView(Ui.t(act, 23, 450, Ui.T2).apply { text = listOfNotNull(ep, dur).joinToString(" · ") }, Ui.linear(-1, -2).apply { topMargin = p(10) })
         val external = f.subs.mapNotNull { SubtitleText.language(Uri.parse(it).lastPathSegment ?: "") }
         val subLangs = (facts?.subs.orEmpty() + external).ifEmpty { if (f.subs.isNotEmpty()) listOf("und") else emptyList() }
-        val chips = (facts?.let { Badges.card(it) } ?: Badges.chips(null, f.name))
+        val chips = (facts?.let { Badges.card(it, f.name) } ?: Badges.chips(null, f.name))
         val sub = Badges.short(subLangs) ?: if (f.subs.isNotEmpty()) "SRT" else null
         if (chips.isNotEmpty() || sub != null) col.addView(LinearLayout(act).apply {
             orientation = LinearLayout.HORIZONTAL

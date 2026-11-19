@@ -152,7 +152,7 @@ class MainActivity : Activity(), Nav {
     private var placed = false
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus && !placed) { placed = true; if (panes[current]?.focusFirst() != true) rail.focusCurrent() }
+        if (hasFocus && !placed) { placed = true; content.post { if (panes[current]?.focusFirst() != true) rail.focusCurrent() } }
     }
 
     // ── Keys ──
