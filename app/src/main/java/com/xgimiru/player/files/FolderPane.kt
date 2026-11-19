@@ -302,7 +302,11 @@ class FolderPane(private val act: Activity, private val nav: Nav, val source: So
             if (!same) poImg.setImageDrawable(null)
             poIcon.visibility = VISIBLE
             if (!f.dir) Arts.find(act, f.uri, f.title, listing?.names) { a ->
-                if (item === f && a.poster != null) { Img.load(poImg, a.poster, 160); poIcon.visibility = GONE }
+                // an episode without a poster shows its own still ("S02E22-thumb.jpg"), never the folder's fanart on every row
+                val base = f.name.substringBeforeLast('.')
+                val own = a.wide?.takeIf { Uri.decode(it.substringAfterLast('/')).startsWith(base) }
+                val pic = a.poster ?: own
+                if (item === f && pic != null) { Img.load(poImg, pic, 160); poIcon.visibility = GONE }
             }
         }
 

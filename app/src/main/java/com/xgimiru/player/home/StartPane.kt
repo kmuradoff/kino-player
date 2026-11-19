@@ -39,6 +39,8 @@ class StartPane(private val act: Activity, private val nav: Nav, private val his
     private val ru get() = tr("ru", "en") == "ru"
     private var first: View? = null
     private var lastFocus: View? = null
+    /** Just built: the first picture takes the focus, not whatever Android focused while the window was laid out. */
+    private var fresh = true
 
     override fun onShow() = build()
 
@@ -49,6 +51,7 @@ class StartPane(private val act: Activity, private val nav: Nav, private val his
         root.removeAllViews()
         first = null
         lastFocus = null
+        fresh = true
         val cont = History.all(act).filter { !it.finished }
         for (e in cont) WatchNext.publish(act, e)
         val shown = if (historyOnly) emptySet() else cont.take(CARDS).map { it.key }.toSet()
@@ -181,7 +184,8 @@ class StartPane(private val act: Activity, private val nav: Nav, private val his
     }
 
     override fun focusFirst(): Boolean {
-        val v = lastFocus?.takeIf { it.isAttachedToWindow } ?: first ?: return false
+        val v = (if (fresh) first else lastFocus?.takeIf { it.isAttachedToWindow } ?: first) ?: return false
+        fresh = false
         return v.requestFocus()
     }
 

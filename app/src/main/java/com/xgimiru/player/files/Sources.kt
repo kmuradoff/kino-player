@@ -73,10 +73,13 @@ class LocalSource(private val ctx: Context, private val v: Places.Volume) : Sour
                 val langs = SubPrep.langs(ctx.playerSettings())
                 val items = files.mapNotNull { f ->
                     when {
-                        f.isDirectory -> FileItem(f.name, Uri.fromFile(f).toString(), true).also { item ->
-                            val inner = f.listFiles()?.filter { !it.name.startsWith(".") && (it.isDirectory || Kinds.isVideo(it.name)) }.orEmpty()
+                        f.isDirectory -> f.listFiles()?.filter { !it.name.startsWith(".") && (it.isDirectory || Kinds.isVideo(it.name)) }.orEmpty().let { inner ->
+                            // the size column of a folder: its films (one level down, no walk through the whole stick)
+                            FileItem(f.name, Uri.fromFile(f).toString(), true, inner.filter { it.isFile }.sumOf { it.length() }.takeIf { it > 0 } ?: -1) to inner
+                        }.let { (item, inner) ->
                             item.count = inner.size
                             item.inside = inner.map { it.name.substringBeforeLast('.') }.sortedWith(Fmt::natural).take(3)
+                            item
                         }.takeIf { it.count > 0 }
                         Kinds.isVideo(f.name) -> FileItem(f.name, Uri.fromFile(f).toString(), false, f.length(),
                             SubtitleText.match(f.name, names.filter { Kinds.ext(it) in Kinds.SUBS }, langs).map { Uri.fromFile(File(d, it)).toString() })
