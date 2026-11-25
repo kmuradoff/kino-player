@@ -120,9 +120,9 @@ class EngineProcess(
 
 /**
  * Built-in engine: TorrServer (GPL-3.0, https://github.com/YouROK/TorrServer), built as its own program and
- * packed into the APK as lib/<abi>/libtorrserver.so. Android unpacks it into nativeLibraryDir, from where it can
- * run. Lumen Play keeps it as a child process and talks to it over HTTP on 127.0.0.1 only, so the network does
- * not see it. [TorrService] keeps it alive.
+ * packed into the APK as lib/<abi>/libtorrserver.so. It runs from the app's own copy ([ExecCopy]): a system image
+ * may ship nativeLibraryDir without the exec bit. Lumen Play keeps it as a child process and talks to it over HTTP
+ * on 127.0.0.1 only, so the network does not see it. [TorrService] keeps it alive.
  *
  * Old links of the built-in engine (Lumen Play 1.3 history) carry the parameter [MARK] and a port of an old
  * start: the player puts the current port in before opening them ([rebase]).
@@ -144,6 +144,25 @@ object TorrEngine {
     fun isAvailable(ctx: Context) = exe(ctx).isFile
 
     private fun exe(ctx: Context) = File(ctx.applicationInfo.nativeLibraryDir, EXE)
+
+    private fun copyDir(ctx: Context) = File(ctx.noBackupFilesDir, "engine")
+
+    /** Set when the system refused to run the copy: until the next app start only the lib folder is tried. */
+    @Volatile private var copyRefused = false
+
+    /** What to run, in order: the app's own runnable copy, then the lib folder (a system that refuses app data). */
+    private fun programs(app: Context): List<File> {
+        val lib = exe(app)
+        if (copyRefused) return listOf(lib)
+        val copy = runCatching { ExecCopy(copyDir(app)).prepare(lib, apkStamp(app)) }.getOrNull()
+        return listOfNotNull(copy, lib)
+    }
+
+    /** The installed APK: its update time and size, so an update copies the engine again. */
+    private fun apkStamp(ctx: Context): String {
+        val info = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
+        return "${info.lastUpdateTime}:${File(ctx.applicationInfo.sourceDir).length()}"
+    }
 
     fun base() = "http://127.0.0.1:$port"
 
@@ -179,16 +198,20 @@ object TorrEngine {
         val p = if (wanted != 0) wanted else freePort()
         // on a busy port /echo would answer from another server and we would take it for ours
         if (wanted != 0 && !isFree(p)) throw IOException(EngineProcess.failure(listOf("already in use"), p, SHARED_PORT))
-        engine.start(
-            listOf(exe(app).path, "-p", "$p", "--ip", "127.0.0.1", "-d", dir.path), p, dir, logFile(app),
-            mapOf(
-                "GOGC" to "50",                     // collect garbage more often: projectors have little memory
-                "GODEBUG" to "madvdontneed=1",      // freed memory goes back to the system at once
-                "TMPDIR" to app.cacheDir.path,
-                "HOME" to dir.path,
-            ),
-            SHARED_PORT,
+        val env = mapOf(
+            "GOGC" to "50",                     // collect garbage more often: projectors have little memory
+            "GODEBUG" to "madvdontneed=1",      // freed memory goes back to the system at once
+            "TMPDIR" to app.cacheDir.path,
+            "HOME" to dir.path,
         )
+        val ran = ExecCopy.startFirst(programs(app)) { exe ->
+            engine.start(listOf(exe.path, "-p", "$p", "--ip", "127.0.0.1", "-d", dir.path), p, dir, logFile(app), env, SHARED_PORT)
+            exe
+        }
+        if (ran == exe(app) && !copyRefused) {
+            copyRefused = true
+            copyDir(app).deleteRecursively()
+        }
         runCatching { applySettings(app) }
         if (wanted == 0) runCatching { prune(app) }
         return base()
