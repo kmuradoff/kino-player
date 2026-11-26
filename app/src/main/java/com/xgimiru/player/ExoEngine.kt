@@ -41,6 +41,7 @@ import androidx.media3.common.VideoSize
 import androidx.media3.common.audio.ChannelMixingAudioProcessor
 import androidx.media3.common.audio.ChannelMixingMatrix
 import androidx.media3.common.text.CueGroup
+import androidx.media3.decoder.ffmpeg.FfmpegLibrary
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.AudioOffloadSupport
 import androidx.media3.exoplayer.audio.AudioSink
@@ -543,9 +544,12 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
         trackSelector.setParameters(trackSelector.buildUponParameters().setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false))
     }
 
+    private fun ffmpegHas(mime: String) = runCatching { FfmpegLibrary.isAvailable() && FfmpegLibrary.supportsFormat(mime) }.getOrDefault(false)
+
     private fun codecSelector(mode: String) = MediaCodecSelector { mime, secure, tunnel ->
         val all = MediaCodecUtil.getDecoderInfos(mime, secure, tunnel)
-        if (!MimeTypes.isVideo(mime)) all
+        // Dolby and DTS that are not passed through are decoded by FFmpeg (packets with several frames are fine there)
+        if (!MimeTypes.isVideo(mime)) { if (!secure && AudioRoute.decodeWithFfmpeg(mime, ::ffmpegHas)) emptyList() else all }
         else when (mode) {
             "hw" -> all.filter { !it.softwareOnly }
             "sw" -> all.sortedBy { if (it.softwareOnly) 0 else 1 }

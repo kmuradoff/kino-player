@@ -64,6 +64,15 @@ class AudioRouteTest {
         assertNull(AudioRoute.guess(emptyList()))
     }
 
+    @Test fun dolbyAndDtsDecodeWithFfmpegWhenItHasThem() {
+        val has = { m: String -> m != "audio/ac4" }
+        for (m in listOf("audio/ac3", "audio/eac3", "audio/eac3-joc", "audio/true-hd", "audio/vnd.dts", "audio/vnd.dts.hd"))
+            assertTrue(m, AudioRoute.decodeWithFfmpeg(m, has))
+        assertFalse(AudioRoute.decodeWithFfmpeg("audio/ac4", has))
+        assertFalse(AudioRoute.decodeWithFfmpeg("audio/mp4a-latm", has))
+        assertFalse(AudioRoute.decodeWithFfmpeg("audio/ac3") { false })
+    }
+
     @Test fun jumpWatchTripsOnTheThirdJumpWithinTheWindow() {
         val w = JumpWatch(limit = 3, windowMs = 20_000)
         assertFalse(w.jump(0))

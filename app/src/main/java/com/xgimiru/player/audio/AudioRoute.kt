@@ -1,5 +1,7 @@
 package com.xgimiru.player.audio
 
+import com.xgimiru.player.settings.Passthrough
+
 /**
  * Where compressed sound (AC3, E-AC3, DTS, TrueHD) may leave the player untouched. Only an HDMI receiver
  * decodes it for real: the built-in speaker, Bluetooth, headphones and USB get PCM decoded by the player.
@@ -56,6 +58,12 @@ object AudioRoute {
         if (route.encodings.isEmpty()) return true
         return encoding in route.encodings || (encoding == ENC_E_AC3_JOC && ENC_E_AC3 in route.encodings)
     }
+
+    /**
+     * Decode this compressed format with FFmpeg rather than the chip's decoder when it is not passed through.
+     * The chip decoder stays for formats FFmpeg lacks (AC-4). Passthrough itself does not use a decoder.
+     */
+    fun decodeWithFfmpeg(mime: String, ffmpegHas: (String) -> Boolean) = Passthrough.isCompressed(mime) && ffmpegHas(mime)
 }
 
 /**
