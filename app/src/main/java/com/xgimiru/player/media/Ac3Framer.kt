@@ -52,8 +52,6 @@ class Ac3Framer(private val sampleRate: Int, private val emit: (data: ByteArray,
         var group = -1          // independent frame waiting for possible dependent substreams
         var groupEnd = -1
         var groupSamples = 0
-        var bytesPerFrame = 0
-        var frameUs = 0L
         while (pos + HEADER <= end) {
             if (!isSync(pos)) {
                 locked = false
@@ -72,25 +70,23 @@ class Ac3Framer(private val sampleRate: Int, private val emit: (data: ByteArray,
             if (isEac3(pos) && streamType(pos) == 1) {
                 if (group >= 0) groupEnd = pos + frame
             } else {
-                if (group >= 0) send(group, groupEnd, groupSamples, timeUs, chunkStart, bytesPerFrame, frameUs)
+                if (group >= 0) send(group, groupEnd, groupSamples, timeUs, chunkStart)
                 group = pos
                 groupEnd = pos + frame
                 groupSamples = samples(pos)
-                bytesPerFrame = frame
-                frameUs = groupSamples * 1_000_000L / sampleRate
             }
             pos += frame
         }
         // E-AC-3 may still get a dependent substream for the last group; plain AC-3 never does
-        if (group >= 0 && !isEac3(group)) { send(group, groupEnd, groupSamples, timeUs, chunkStart, bytesPerFrame, frameUs); group = -1 }
+        if (group >= 0 && !isEac3(group)) { send(group, groupEnd, groupSamples, timeUs, chunkStart); group = -1 }
         val keep = (if (group >= 0) group else pos).coerceAtMost(len)
         System.arraycopy(buf, keep, buf, 0, len - keep)
         len -= keep
     }
 
-    private fun send(start: Int, end: Int, samples: Int, chunkUs: Long, chunkStart: Int, bytesPerFrame: Int, frameUs: Long) {
-        // where the container puts this frame, assuming constant bitrate inside the chunk
-        val guess = chunkUs + if (bytesPerFrame > 0) (start - chunkStart).toLong() * frameUs / bytesPerFrame else 0
+    private fun send(start: Int, end: Int, samples: Int, chunkUs: Long, chunkStart: Int) {
+        // where the container puts this access unit, assuming a constant bitrate around the chunk
+        val guess = chunkUs + (start - chunkStart).toLong() * (samples * 1_000_000L / sampleRate) / (end - start)
         var at = if (anchorUs == C.TIME_UNSET) C.TIME_UNSET else anchorUs + anchorSamples * 1_000_000L / sampleRate
         if (at == C.TIME_UNSET || kotlin.math.abs(at - guess) > RESYNC_US) {
             anchorUs = guess
