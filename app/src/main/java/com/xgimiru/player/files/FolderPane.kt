@@ -41,7 +41,11 @@ import com.xgimiru.player.TorrentActivity
  * it, long OK plays it from the start and drops it from the history.
  */
 @UnstableApi
-class FolderPane(private val act: Activity, private val nav: Nav, val source: Source) : Pane {
+class FolderPane(
+    private val act: Activity, private val nav: Nav, val source: Source,
+    /** Which player opens a video: a torrent's own list keeps it in its task. */
+    private val player: Class<out Activity> = PlayerActivity::class.java,
+) : Pane {
     private val root = FrameLayout(act)
     override val view: View = root
     private val p = { v: Number -> Ui.px(act, v) }
@@ -62,6 +66,8 @@ class FolderPane(private val act: Activity, private val nav: Nav, val source: So
     private var shownAt = -1
     /** Focus was asked for before the list arrived: take it when it does. */
     private var wantFocus = false
+    /** The folder a video was started from: back from the player, the row of the last played video takes focus. */
+    private var playedFrom: String? = null
 
     override fun onShow() {
         if (!built) build()
@@ -160,7 +166,8 @@ class FolderPane(private val act: Activity, private val nav: Nav, val source: So
             if (stack.lastOrNull()?.second != uri) return@list
             listing = l
             items = l?.items.orEmpty()
-            val at = (restore[uri] ?: l?.start ?: 0).coerceAtMost(items.size - 1)
+            val played = if (playedFrom == uri) lastPlayed() else -1
+            val at = (if (played >= 0) played else restore[uri] ?: l?.start ?: 0).coerceAtMost(items.size - 1)
             (list.adapter as BaseAdapter).notifyDataSetChanged()
             meta.text = Fmt.objects(items.size, ru) + tr(", по имени", ", by name")
             message.text = when {
@@ -201,13 +208,22 @@ class FolderPane(private val act: Activity, private val nav: Nav, val source: So
         if (fromStart) History.forget(act, History.key(Uri.parse(f.uri)))
         // the whole folder is the list: the next episode starts by itself
         val videos = items.filter { !it.dir && !it.torrent }
-        act.startActivity(Intent(act, PlayerActivity::class.java)
+        restore[stack.last().second] = pos
+        playedFrom = stack.last().second
+        act.startActivity(Intent(act, player)
             .setData(Uri.parse(f.uri))
             .putExtra("title", f.title)
             .putExtra("from_start", fromStart)
             .putExtra("video_list", videos.map { Uri.parse(it.uri) }.toTypedArray<android.os.Parcelable>())
             .putExtra("video_list.name", videos.map { it.title }.toTypedArray())
             .putExtra("video_list.subs", videos.map { it.subs.joinToString("\n") }.toTypedArray()))
+    }
+
+    /** Row of the video of this folder watched last (the player may have gone on to the next episode). */
+    private fun lastPlayed(): Int {
+        val rows = items.withIndex().filter { !it.value.dir && !it.value.torrent }
+            .associate { History.key(Uri.parse(it.value.uri)) to it.index }
+        return History.recent(act).firstNotNullOfOrNull { rows[it.key] } ?: -1
     }
 
     override fun focusFirst(): Boolean {

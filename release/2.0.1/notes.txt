@@ -1,0 +1,9 @@
+Lumen Play 2.0.1
+
+Фильмы в AVI со звуком AC-3 больше не перескакивают вперёд каждую секунду.
+Торрент из Лампы: кнопка Назад из фильма ведёт к списку серий этого торрента, а оттуда обратно в Лампу. Фильм из одного файла возвращает сразу в Лампу. Главный экран Lumen Play при этом не открывается.
+Встроенный TorrServer запускается и там, где система ставит приложение без права запуска файлов из его папки.
+
+AVI films with AC-3 sound no longer jump forward every second.
+A torrent from Lampa: Back from the film goes to the episode list of that torrent, and from there back to Lampa. A film of one file returns straight to Lampa. Lumen Play's home screen does not open on the way.
+The built-in TorrServer starts also where the system installs the app without the right to run files from its folder.

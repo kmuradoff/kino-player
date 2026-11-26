@@ -36,7 +36,7 @@ import android.graphics.drawable.GradientDrawable
  * приложения передают внешним плеерам (MX Player, VLC), и возвращает, где остановились.
  * Поведение задают настройки плеера ([K]): перемотка, кнопки, продолжение, звук, субтитры.
  */
-class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
+open class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
 
     private data class Item(val uri: Uri, val title: String, val subs: List<Uri>)
 
@@ -1074,3 +1074,10 @@ class PlayerActivity : Activity(), Engine.Listener, PlayerBridge.Controls {
         )
     }
 }
+
+/**
+ * The player opened from a torrent's file list. [PlayerActivity] is singleTask and lives in Lumen Play's own task,
+ * so a torrent sent by another app (Lampa) played on top of Lumen Play's home and Back led there. This one stays
+ * in the task of the file list: Back returns to the list, and from there to the app that sent the torrent.
+ */
+class TorrentPlayerActivity : PlayerActivity()

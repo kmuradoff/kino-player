@@ -16,6 +16,8 @@ import androidx.media3.extractor.ExtractorsFactory
 import androidx.media3.extractor.PositionHolder
 import androidx.media3.extractor.SeekMap
 import androidx.media3.extractor.TrackOutput
+import androidx.media3.extractor.avi.AviExtractor
+import com.xgimiru.player.media.FramedAudioTrack
 import java.util.TreeMap
 
 /**
@@ -86,9 +88,15 @@ private class TapExtractor(
     private val caps: HdrPolicy.Caps, private val prefs: HdrPolicy.Prefs,
 ) : Extractor {
     override fun sniff(input: ExtractorInput) = inner.sniff(input)
-    override fun init(output: ExtractorOutput) = inner.init(TapOutput(output, store, caps, prefs))
+    /** AVI audio chunks are cut by size, not by frame: those tracks go through [FramedAudioTrack]. */
+    private val framed = mutableListOf<FramedAudioTrack>()
+    override fun init(output: ExtractorOutput) =
+        inner.init(TapOutput(output, store, caps, prefs, if (inner.underlyingImplementation is AviExtractor) framed else null))
     override fun read(input: ExtractorInput, seekPosition: PositionHolder) = inner.read(input, seekPosition)
-    override fun seek(position: Long, timeUs: Long) = inner.seek(position, timeUs)
+    override fun seek(position: Long, timeUs: Long) {
+        framed.forEach { it.reset() }
+        inner.seek(position, timeUs)
+    }
     override fun release() = inner.release()
     override fun getUnderlyingImplementation(): Extractor = inner.underlyingImplementation
 }
@@ -97,10 +105,15 @@ private class TapExtractor(
 private class TapOutput(
     private val inner: ExtractorOutput, private val store: DoviStore,
     private val caps: HdrPolicy.Caps, private val prefs: HdrPolicy.Prefs,
+    private val framed: MutableList<FramedAudioTrack>?,
 ) : ExtractorOutput {
     override fun track(id: Int, type: Int): TrackOutput {
         val t = inner.track(id, type)
-        return if (type == C.TRACK_TYPE_VIDEO) TapTrack(t, store, caps, prefs) else t
+        return when {
+            type == C.TRACK_TYPE_VIDEO -> TapTrack(t, store, caps, prefs)
+            type == C.TRACK_TYPE_AUDIO && framed != null -> FramedAudioTrack(t).also { framed += it }
+            else -> t
+        }
     }
     override fun endTracks() = inner.endTracks()
     override fun seekMap(seekMap: SeekMap) = inner.seekMap(seekMap)

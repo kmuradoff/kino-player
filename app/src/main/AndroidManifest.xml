@@ -76,12 +76,19 @@
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
         </activity>
+        <!-- the player of a torrent's file list: stays in that list's task (Back returns to the list, then to the sender) -->
+        <activity
+            android:name=".TorrentPlayerActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation|smallestScreenSize|uiMode"
+            android:theme="@style/Kino.Player" />
         <activity android:name=".SettingsActivity" android:exported="false" />
 
         <!-- magnet links and .torrent files: the list of videos, playback through the built-in TorrServer -->
         <activity
             android:name=".TorrentActivity"
             android:exported="true"
+            android:taskAffinity="com.xgimiru.player.torrent"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation|smallestScreenSize|uiMode">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
