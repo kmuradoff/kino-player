@@ -223,13 +223,13 @@ class TorrentActivity : Activity(), Nav {
         if (tree.videos.size == 1) {
             val v = tree.videos[0]
             val subs = tree.subsFor(v, SubPrep.langs(playerSettings())).map { Uri.parse(source.stream(it)) }
-            val i = Intent(this, PlayerActivity::class.java).setData(Uri.parse(source.stream(v))).putExtra("title", heading.text.toString())
+            val i = Intent(this, TorrentPlayerActivity::class.java).setData(Uri.parse(source.stream(v))).putExtra("title", heading.text.toString())
             if (subs.isNotEmpty()) i.putExtra("subs", subs.toTypedArray<Parcelable>())
             startActivity(i)
             finish()
             return
         }
-        val fp = FolderPane(this, this, source)
+        val fp = FolderPane(this, this, source, TorrentPlayerActivity::class.java)
         pane = fp
         content.removeAllViews()
         content.addView(fp.view, Ui.frame(-1, -1))
