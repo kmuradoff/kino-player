@@ -14,6 +14,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.TrackSelectionParameters.AudioOffloadPreferences
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
@@ -40,6 +41,9 @@ import androidx.media3.common.VideoSize
 import androidx.media3.common.audio.ChannelMixingAudioProcessor
 import androidx.media3.common.audio.ChannelMixingMatrix
 import androidx.media3.common.text.CueGroup
+import androidx.media3.decoder.ffmpeg.FfmpegLibrary
+import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.audio.AudioOffloadSupport
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.ForwardingAudioSink
@@ -48,6 +52,9 @@ import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
 import android.media.audiofx.DynamicsProcessing
 import android.media.audiofx.LoudnessEnhancer
 import android.os.Build
+import android.os.SystemClock
+import com.xgimiru.player.audio.AudioOutput
+import com.xgimiru.player.audio.AudioRoute
 import com.xgimiru.player.settings.FrameRateHook
 import com.xgimiru.player.settings.K
 import com.xgimiru.player.settings.Passthrough
@@ -76,6 +83,14 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
     // Туннель выключен по умолчанию: в туннеле звук идёт в аудиотракт MediaTek мимо микшера Android,
     // и громкость системы к нему не применяется. Включается в настройках (Видео > Туннельный режим).
     private val tunneling = cfg.bool(K.TUNNELING)
+
+    /**
+     * Where the sound goes now. Compressed sound goes out untouched only to an HDMI receiver; the speaker,
+     * Bluetooth and headphones get PCM. A route change re-opens the audio output with the new choice.
+     */
+    private val output = AudioOutput(ctx) { old, new -> onRoute(old, new) }
+    /** The audio renderer is switched off for a moment to re-open the output (see [reopenAudio]). */
+    private var reopening = false
 
     var doviHdr: Boolean
         get() = cfg.string(K.DV5) == "true"
@@ -153,6 +168,12 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
             main.post { enableDovi() }
         }
 
+        player.addAnalyticsListener(object : AnalyticsListener {
+            override fun onAudioSinkError(eventTime: AnalyticsListener.EventTime, audioSinkError: Exception) {
+                if (audioSinkError is AudioSink.UnexpectedDiscontinuityException && output.jumped(SystemClock.elapsedRealtime()))
+                    reopenAudio("passthrough timestamps jump")
+            }
+        })
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) = listener.onStateChanged()
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
@@ -184,6 +205,7 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
                 if (reason == Player.DISCONTINUITY_REASON_SEEK) { pending.clear(); subView.setCues(emptyList()) }
             }
             override fun onTracksChanged(tracks: Tracks) {
+                if (reopening && !tracks.isTypeSelected(C.TRACK_TYPE_AUDIO)) { audioBack(); return }
                 // Dolby Vision профиля 5 без HDR10-основы: в прошивке XGIMI декодер DV выключен —
                 // видео не пойдёт ни в одном плеере. Честно говорим об этом вместо чёрного экрана.
                 val dvOnly = tracks.groups.any { g ->
@@ -394,6 +416,8 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
 
     override fun release() {
         main.removeCallbacks(pump)
+        main.removeCallbacks(reopenTimeout)
+        runCatching { output.release() }
         runCatching { loudness?.release() }
         runCatching { dynamics?.release() }
         doviRenderer?.let { player.clearVideoFrameMetadataListener(it) }
@@ -478,16 +502,54 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
     private inner class Sink(sink: AudioSink) : ForwardingAudioSink(sink) {
         override fun supportsFormat(format: Format) = getFormatSupport(format) != AudioSink.SINK_FORMAT_UNSUPPORTED
         override fun getFormatSupport(format: Format): Int =
-            if (!Passthrough.allowed(format.sampleMimeType, cfg)) AudioSink.SINK_FORMAT_UNSUPPORTED else super.getFormatSupport(format)
+            if (!passthroughOk(format)) AudioSink.SINK_FORMAT_UNSUPPORTED else super.getFormatSupport(format)
+        // no audio offload at all: vendor offload outputs report the play position wrongly
+        override fun getFormatOffloadSupport(format: Format): AudioOffloadSupport = AudioOffloadSupport.DEFAULT_UNSUPPORTED
+        override fun configure(inputFormat: Format, specifiedBufferSize: Int, outputChannels: IntArray?) {
+            output.passthrough = Passthrough.isCompressed(inputFormat.sampleMimeType)
+            super.configure(inputFormat, specifiedBufferSize, outputChannels)
+        }
         override fun getCurrentPositionUs(sourceEnded: Boolean): Long {
             val p = super.getCurrentPositionUs(sourceEnded)
             return if (p == AudioSink.CURRENT_POSITION_NOT_SET) p else (p + audioDelayUs).coerceAtLeast(0)
         }
     }
 
+    private fun passthroughOk(f: Format, on: AudioRoute.Device? = output.route) =
+        Passthrough.allowed(f.sampleMimeType, cfg) && output.allows(f, on)
+
+    /** The route changed: re-open the audio output when the choice for the playing track changes. */
+    private fun onRoute(old: AudioRoute.Device?, new: AudioRoute.Device?) {
+        val f = player.audioFormat ?: return
+        if (Passthrough.isCompressed(f.sampleMimeType) && passthroughOk(f, old) != passthroughOk(f, new)) reopenAudio("route changed")
+    }
+
+    /**
+     * Media3 picks passthrough or decoding when the audio renderer starts, so switch it off and on again:
+     * off now, on again in [onTracksChanged] once the player has dropped the audio track.
+     */
+    private fun reopenAudio(why: String) = main.post {
+        if (reopening || !player.currentTracks.isTypeSelected(C.TRACK_TYPE_AUDIO)) return@post
+        android.util.Log.i("LumenAudio", "re-opening the audio output: $why")
+        reopening = true
+        trackSelector.setParameters(trackSelector.buildUponParameters().setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true))
+        main.postDelayed(reopenTimeout, 2_000)
+    }
+
+    private val reopenTimeout = Runnable { if (reopening) audioBack() }
+
+    private fun audioBack() {
+        reopening = false
+        main.removeCallbacks(reopenTimeout)
+        trackSelector.setParameters(trackSelector.buildUponParameters().setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false))
+    }
+
+    private fun ffmpegHas(mime: String) = runCatching { FfmpegLibrary.isAvailable() && FfmpegLibrary.supportsFormat(mime) }.getOrDefault(false)
+
     private fun codecSelector(mode: String) = MediaCodecSelector { mime, secure, tunnel ->
         val all = MediaCodecUtil.getDecoderInfos(mime, secure, tunnel)
-        if (!MimeTypes.isVideo(mime)) all
+        // Dolby and DTS that are not passed through are decoded by FFmpeg (packets with several frames are fine there)
+        if (!MimeTypes.isVideo(mime)) { if (!secure && AudioRoute.decodeWithFfmpeg(mime, ::ffmpegHas)) emptyList() else all }
         else when (mode) {
             "hw" -> all.filter { !it.softwareOnly }
             "sw" -> all.sortedBy { if (it.softwareOnly) 0 else 1 }
@@ -531,6 +593,9 @@ class ExoEngine(private val ctx: Context, private val host: FrameLayout, private
             else -> b.setPreferredTextLanguages(*listOfNotNull(if (t == "system") sys else t,
                 cfg.string(K.SUB_LANG2).takeIf { it != "none" }).toTypedArray())
         }
+        // compressed sound is never offloaded: the sink decides passthrough per route (see [Sink])
+        b.setAudioOffloadPreferences(AudioOffloadPreferences.Builder()
+            .setAudioOffloadMode(AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_DISABLED).build())
         return b.setTunnelingEnabled(tunneling)
     }
 
